@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { Save } from 'lucide-vue-next'
 import { adminApi, publicApi } from '@/api'
 import { errorMessage } from '@/api/client'
-import { DEFAULT_SETTINGS } from '@/data/defaults'
+import { DEFAULT_SETTINGS, DEFAULT_WATERMARK_CAPTION, DEFAULT_WATERMARK_SUBTITLE, DEFAULT_WATERMARK_TITLE } from '@/data/defaults'
 import type { Settings } from '@/types'
 import { validClockTime, validTimezone, validWebUrl } from '@/utils/validation'
 import AlertMessage from '@/components/common/AlertMessage.vue'
@@ -33,6 +33,10 @@ function validate() {
   if (!validClockTime(form.value.background.night_start)) errors.night_start = '时间格式应为 HH:mm'
   if (!validWebUrl(form.value.background.day_url)) errors.day_url = '请输入有效的日间背景地址'
   if (!validWebUrl(form.value.background.night_url)) errors.night_url = '请输入有效的夜间背景地址'
+  if (form.value.loader.watermark_title.length > 60) errors.watermark_title = '水印主标题不能超过 60 字符'
+  if (form.value.loader.watermark_subtitle.length > 80) errors.watermark_subtitle = '水印副标题不能超过 80 字符'
+  if (form.value.loader.watermark_caption.length > 120) errors.watermark_caption = '水印小字不能超过 120 字符'
+  if (form.value.loader.badge_image && !validWebUrl(form.value.loader.badge_image) && !form.value.loader.badge_image.startsWith('/')) errors.badge_image = '请输入有效的徽章图片地址'
   if (form.value.background.duration_ms < 0 || form.value.background.duration_ms > 10000) errors.duration_ms = '过渡时长应在 0–10000 毫秒之间'
   if (form.value.guestbook_max_length < 1 || form.value.guestbook_max_length > 2000) errors.guestbook_max_length = '留言长度应在 1–2000 之间'
   fieldErrors.value = errors
@@ -77,7 +81,31 @@ async function save() {
             <FormField label="日间开始时间" :error="fieldErrors.day_start"><input v-model="form.background.day_start" class="field" type="time" /></FormField>
             <FormField label="夜间开始时间" :error="fieldErrors.night_start"><input v-model="form.background.night_start" class="field" type="time" /></FormField>
           </div>
+          <p class="mt-3 text-[11px] text-white/35">背景支持图片或视频直链（.mp4 / .webm / .mov 等，自动识别，静音循环播放）。</p>
           <p v-if="fieldErrors.day_url || fieldErrors.night_url" class="mt-2 text-xs text-rose-300">{{ fieldErrors.day_url || fieldErrors.night_url }}</p>
+        </section>
+
+        <section>
+          <h3 class="mb-4 text-xs font-semibold tracking-wider text-violet-200/65">卡片显示</h3>
+          <div class="grid items-center gap-5 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 min-[760px]:grid-cols-2">
+            <ToggleSwitch v-model="form.cards.profile" label="个人资料卡片" />
+            <ToggleSwitch v-model="form.cards.navigation" label="站点导航卡片" />
+            <ToggleSwitch v-model="form.cards.devices" label="设备展示卡片" />
+            <ToggleSwitch v-model="form.cards.terminal" label="终端留言卡片" />
+            <ToggleSwitch v-model="form.cards.clock" label="时钟与音乐卡片" />
+          </div>
+        </section>
+
+        <section>
+          <h3 class="mb-4 text-xs font-semibold tracking-wider text-violet-200/65">加载页</h3>
+          <div class="grid gap-5 min-[760px]:grid-cols-2">
+            <FormField label="水印主标题" :error="fieldErrors.watermark_title" hint="留空使用默认文案"><input v-model="form.loader.watermark_title" class="field" maxlength="60" :placeholder="DEFAULT_WATERMARK_TITLE" /></FormField>
+            <FormField label="水印副标题" :error="fieldErrors.watermark_subtitle" hint="留空使用默认文案"><input v-model="form.loader.watermark_subtitle" class="field" maxlength="80" :placeholder="DEFAULT_WATERMARK_SUBTITLE" /></FormField>
+            <FormField label="水印小字" :error="fieldErrors.watermark_caption" hint="留空使用默认文案"><input v-model="form.loader.watermark_caption" class="field" maxlength="120" :placeholder="DEFAULT_WATERMARK_CAPTION" /></FormField>
+            <ImageUploadField v-model="form.loader.badge_image" label="徽章图片（可选，点阵化显示）" />
+          </div>
+          <p v-if="fieldErrors.badge_image" class="mt-2 text-xs text-rose-300">{{ fieldErrors.badge_image }}</p>
+          <p class="mt-3 text-[11px] text-white/35">徽章图片支持链接或上传，加载页会将其转换为半调点阵风格；留空使用内置几何徽章。</p>
         </section>
 
         <section>

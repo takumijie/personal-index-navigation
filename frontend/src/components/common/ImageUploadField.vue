@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { ImagePlus, LoaderCircle } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { Film, ImagePlus, LoaderCircle } from 'lucide-vue-next'
 import { adminApi } from '@/api'
 import { errorMessage } from '@/api/client'
+import { isVideoUrl } from '@/utils/media'
 import FormField from './FormField.vue'
 
 const model = defineModel<string>({ required: true })
+const isVideo = computed(() => isVideoUrl(model.value))
 withDefaults(defineProps<{ label: string; required?: boolean }>(), { required: false })
 const fileInput = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
@@ -42,8 +44,9 @@ async function upload(event: Event) {
 <template>
   <FormField :label="label" :error="error" hint="支持 URL 或本地上传">
     <div class="flex gap-2">
-      <div v-if="model" class="size-[38px] shrink-0 overflow-hidden rounded-[10px] border border-white/10 bg-white/5">
-        <img :src="model" alt="图片预览" class="size-full object-cover" />
+      <div v-if="model" class="flex size-[38px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] border border-white/10 bg-white/5">
+        <Film v-if="isVideo" :size="16" class="text-white/45" />
+        <img v-else :src="model" alt="图片预览" class="size-full object-cover" />
       </div>
       <input v-model="model" class="field" type="text" :required="required" placeholder="https://… 或 /uploads/…" />
       <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="upload" />

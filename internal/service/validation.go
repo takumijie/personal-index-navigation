@@ -155,6 +155,14 @@ func validateSettings(settings model.Settings) error {
 	if settings.Background.DurationMS < 0 || settings.Background.DurationMS > 60000 {
 		return invalid("背景切换时长无效")
 	}
+	if !validLength(settings.Loader.WatermarkTitle, 60) || !plainText(settings.Loader.WatermarkTitle, false) ||
+		!validLength(settings.Loader.WatermarkSubtitle, 80) || !plainText(settings.Loader.WatermarkSubtitle, false) ||
+		!validLength(settings.Loader.WatermarkCaption, 120) || !plainText(settings.Loader.WatermarkCaption, false) {
+		return invalid("加载页水印文字无效")
+	}
+	if !resourceURL(settings.Loader.BadgeImage, false) {
+		return invalid("加载页徽章图片 URL 无效")
+	}
 	if settings.GuestbookMaxLength < 1 || settings.GuestbookMaxLength > 10000 {
 		return invalid("留言长度限制无效")
 	}

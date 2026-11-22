@@ -17,3 +17,5 @@ storage/images/*
 .env
 .DS_Store
 Thumbs.db
+Docs/*
+.trae/*

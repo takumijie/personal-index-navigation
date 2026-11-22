@@ -2,14 +2,20 @@
 import { computed, ref } from 'vue'
 import { AtSign, Download, Sparkles } from 'lucide-vue-next'
 import type { Profile } from '@/types'
+import { DEFAULT_DAY_BACKGROUND } from '@/data/defaults'
+import { isVideoUrl } from '@/utils/media'
 
 const props = defineProps<{ profile: Profile; activeBackground: string; dayBackground: string; nightBackground: string }>()
 const avatarFailed = ref(false)
+// 封面展示与下载始终是图片：背景为视频时回退到默认静态图
+function staticCover(url: string) {
+  return isVideoUrl(url) ? DEFAULT_DAY_BACKGROUND : url
+}
 const cover = computed(() => {
-  if (props.profile.cover_mode === 'custom') return props.profile.cover_url || props.activeBackground
-  if (props.profile.cover_mode === 'day') return props.dayBackground
-  if (props.profile.cover_mode === 'night') return props.nightBackground
-  return props.activeBackground
+  if (props.profile.cover_mode === 'custom') return props.profile.cover_url || staticCover(props.activeBackground)
+  if (props.profile.cover_mode === 'day') return staticCover(props.dayBackground)
+  if (props.profile.cover_mode === 'night') return staticCover(props.nightBackground)
+  return staticCover(props.activeBackground)
 })
 
 function downloadCover() {

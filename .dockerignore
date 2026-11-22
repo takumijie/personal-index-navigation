@@ -13,3 +13,5 @@ frontend/coverage
 *.db-wal
 .vscode
 .trae
+.trae/*
+Docs/*

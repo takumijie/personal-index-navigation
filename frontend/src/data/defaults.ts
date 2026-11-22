@@ -4,6 +4,10 @@ export const DEFAULT_DAY_BACKGROUND = '/images/background-day.webp'
 export const DEFAULT_NIGHT_BACKGROUND = '/images/background-night.webp'
 export const DEFAULT_AVATAR = '/images/avatar.webp'
 
+export const DEFAULT_WATERMARK_TITLE = 'PERSONAL SPACE'
+export const DEFAULT_WATERMARK_SUBTITLE = 'ARCHIVE // CYBERSPACE NODE'
+export const DEFAULT_WATERMARK_CAPTION = 'Connected to Personal Cyberspace'
+
 export const DEFAULT_SETTINGS: Settings = {
   site_title: 'Personal Space',
   timezone: 'Asia/Shanghai',
@@ -17,6 +21,8 @@ export const DEFAULT_SETTINGS: Settings = {
     timezone: 'Asia/Shanghai',
     duration_ms: 1200,
   },
+  cards: { profile: true, navigation: true, devices: true, terminal: true, clock: true },
+  loader: { watermark_title: '', watermark_subtitle: '', watermark_caption: '', badge_image: '' },
   guestbook_auto_publish: false,
   guestbook_max_length: 280,
 }

@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type { Settings } from '@/types'
+import { isVideoUrl } from '@/utils/media'
 
 function zonedMinutes(date: Date, timezone: string): number {
   try {
@@ -39,10 +40,30 @@ export function useBackground(settings: Ref<Settings>) {
   const activeUrl = computed(() => mode.value === 'day' ? settings.value.background.day_url : settings.value.background.night_url)
   const duration = computed(() => reducedMotion.value ? 0 : Math.max(0, settings.value.background.duration_ms))
 
+  function markLoaded(url: string) {
+    // 替换 Set 以触发依赖更新（BackgroundScene 与加载页就绪判断均依赖它）
+    const next = new Set(loaded.value)
+    next.add(url)
+    loaded.value = next
+  }
+
   function preload(url: string) {
     if (!url || loaded.value.has(url)) return
+    if (isVideoUrl(url)) {
+      const video = document.createElement('video')
+      video.preload = 'auto'
+      video.muted = true
+      video.addEventListener('canplay', () => {
+        markLoaded(url)
+        // 释放预载元素，实际播放由 BackgroundScene 的 video 元素负责
+        video.removeAttribute('src')
+        video.load()
+      }, { once: true })
+      video.src = url
+      return
+    }
     const image = new Image()
-    image.onload = () => loaded.value.add(url)
+    image.onload = () => markLoaded(url)
     image.src = url
   }
 
@@ -69,5 +90,5 @@ export function useBackground(settings: Ref<Settings>) {
     if (timer) clearTimeout(timer)
     if (updateMotion) motionQuery?.removeEventListener('change', updateMotion)
   })
-  return { mode, isDay, activeUrl, loaded, duration, preload }
+  return { mode, isDay, activeUrl, loaded, duration, preload, reducedMotion }
 }

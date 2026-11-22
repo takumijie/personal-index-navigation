@@ -38,12 +38,29 @@ export interface BackgroundSettings {
   duration_ms: number
 }
 
+export interface CardSettings {
+  profile: boolean
+  navigation: boolean
+  devices: boolean
+  terminal: boolean
+  clock: boolean
+}
+
+export interface LoaderSettings {
+  watermark_title: string
+  watermark_subtitle: string
+  watermark_caption: string
+  badge_image: string
+}
+
 export interface Settings {
   site_title: string
   timezone: string
   time_format: '12' | '24'
   clock_label: string
   background: BackgroundSettings
+  cards: CardSettings
+  loader: LoaderSettings
   guestbook_auto_publish: boolean
   guestbook_max_length: number
 }

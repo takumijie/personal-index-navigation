@@ -90,13 +90,13 @@ type MusicTrack struct {
 func (MusicTrack) TableName() string { return "music_tracks" }
 
 type Playlist struct {
-	ID        uint           `gorm:"primaryKey" json:"id"`
-	Name      string         `json:"name"`
-	Sort      int            `json:"sort"`
-	Enabled   bool           `json:"enabled"`
-	CreatedAt time.Time      `json:"-"`
-	UpdatedAt time.Time      `json:"-"`
-	Tracks    []MusicTrack   `gorm:"-" json:"tracks"`
+	ID        uint            `gorm:"primaryKey" json:"id"`
+	Name      string          `json:"name"`
+	Sort      int             `json:"sort"`
+	Enabled   bool            `json:"enabled"`
+	CreatedAt time.Time       `json:"-"`
+	UpdatedAt time.Time       `json:"-"`
+	Tracks    []MusicTrack    `gorm:"-" json:"tracks"`
 	Items     []PlaylistTrack `gorm:"foreignKey:PlaylistID" json:"-"`
 }
 
@@ -140,12 +140,29 @@ type Background struct {
 	DurationMS int    `json:"duration_ms"`
 }
 
+type CardSettings struct {
+	Profile    bool `json:"profile"`
+	Navigation bool `json:"navigation"`
+	Devices    bool `json:"devices"`
+	Terminal   bool `json:"terminal"`
+	Clock      bool `json:"clock"`
+}
+
+type LoaderSettings struct {
+	WatermarkTitle    string `json:"watermark_title"`
+	WatermarkSubtitle string `json:"watermark_subtitle"`
+	WatermarkCaption  string `json:"watermark_caption"`
+	BadgeImage        string `json:"badge_image"`
+}
+
 type Settings struct {
-	SiteTitle           string     `json:"site_title"`
-	Timezone            string     `json:"timezone"`
-	TimeFormat          string     `json:"time_format"`
-	ClockLabel          string     `json:"clock_label"`
-	Background          Background `json:"background"`
-	GuestbookAutoPublish bool      `json:"guestbook_auto_publish"`
-	GuestbookMaxLength   int       `json:"guestbook_max_length"`
+	SiteTitle            string         `json:"site_title"`
+	Timezone             string         `json:"timezone"`
+	TimeFormat           string         `json:"time_format"`
+	ClockLabel           string         `json:"clock_label"`
+	Background           Background     `json:"background"`
+	Cards                CardSettings   `json:"cards"`
+	Loader               LoaderSettings `json:"loader"`
+	GuestbookAutoPublish bool           `json:"guestbook_auto_publish"`
+	GuestbookMaxLength   int            `json:"guestbook_max_length"`
 }
