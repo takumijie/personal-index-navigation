@@ -12,7 +12,7 @@ import ClockPanel from '@/components/clock/ClockPanel.vue'
 import { useBackground } from '@/composables/useBackground'
 import { useHomeData } from '@/composables/useHomeData'
 
-const { profile, navigation, devices, settings, guestbook, tracks, visitor, loading, error, reload } = useHomeData()
+const { profile, navigation, devices, settings, guestbook, tracks, visitor, loading, error, terminalError, loadTerminalData, reload } = useHomeData()
 const { mode, activeUrl, loaded, duration, reducedMotion } = useBackground(settings)
 
 watchEffect(() => { document.title = settings.value.site_title })
@@ -88,7 +88,15 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="rightVisible" class="flex min-h-0 flex-col gap-4">
-        <TerminalCard v-if="cards.terminal" v-model:entries="guestbook" :settings="settings" :visitor="visitor" />
+        <TerminalCard
+          v-if="cards.terminal"
+          v-model:entries="guestbook"
+          :active="bootPhase === 'done'"
+          :settings="settings"
+          :visitor="visitor"
+          :terminal-error="terminalError"
+          :load-terminal-data="loadTerminalData"
+        />
         <ClockPanel v-if="cards.clock" :settings="settings" :tracks="tracks" class="shrink-0" />
       </div>
     </main>

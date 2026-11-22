@@ -166,6 +166,9 @@ func validateSettings(settings model.Settings) error {
 	if !resourceURL(settings.Loader.BadgeImage, false) {
 		return invalid("加载页徽章图片 URL 无效")
 	}
+	if settings.Terminal.FastfetchLoadingMS < 0 || settings.Terminal.FastfetchLoadingMS > 10000 {
+		return invalid("Fastfetch 停留时长无效")
+	}
 	if settings.GuestbookMaxLength < 1 || settings.GuestbookMaxLength > 10000 {
 		return invalid("留言长度限制无效")
 	}

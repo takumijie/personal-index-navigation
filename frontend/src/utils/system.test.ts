@@ -4,17 +4,17 @@ import { detectSystem } from './system'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('detectSystem', () => {
-  it('detects Linux distributions and Chromium-based browsers', async () => {
+  it('normalizes Linux distributions and detects Chromium-based browsers', async () => {
     vi.stubGlobal('navigator', {
       userAgent: 'Mozilla/5.0 (X11; Arch Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0',
     })
 
     const result = await detectSystem()
 
-    expect(result).toMatchObject({ os: 'Arch Linux', distributionKey: 'arch', browserName: 'Edge', browserVersion: '130.0.0.0' })
+    expect(result).toMatchObject({ os: 'Linux', distributionKey: 'linux', browserName: 'Edge', browserVersion: '130.0.0.0' })
   })
 
-  it('uses high entropy platform data when available', async () => {
+  it('keeps Linux generic when high entropy platform data names a distribution', async () => {
     vi.stubGlobal('navigator', {
       userAgent: 'Mozilla/5.0 AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36',
       userAgentData: {
@@ -26,9 +26,20 @@ describe('detectSystem', () => {
 
     const result = await detectSystem()
 
-    expect(result.os).toBe('Ubuntu')
-    expect(result.distributionKey).toBe('ubuntu')
+    expect(result.os).toBe('Linux')
+    expect(result.distributionKey).toBe('linux')
     expect(result.browserName).toBe('Chrome')
+  })
+
+  it.each([
+    ['Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36', 'ChromeOS', 'chromeos'],
+    ['Mozilla/5.0 (X11; FreeBSD amd64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36', 'FreeBSD', 'freebsd'],
+  ])('distinguishes %s from generic Linux', async (userAgent, os, distributionKey) => {
+    vi.stubGlobal('navigator', { userAgent })
+
+    const result = await detectSystem()
+
+    expect(result).toMatchObject({ os, distributionKey })
   })
 
   it('extracts mobile OS versions and Safari versions', async () => {

@@ -157,14 +157,19 @@ type LoaderSettings struct {
 	BadgeImage        string `json:"badge_image"`
 }
 
+type TerminalSettings struct {
+	FastfetchLoadingMS int `json:"fastfetch_loading_ms"`
+}
+
 type Settings struct {
-	SiteTitle            string         `json:"site_title"`
-	Timezone             string         `json:"timezone"`
-	TimeFormat           string         `json:"time_format"`
-	ClockLabel           string         `json:"clock_label"`
-	Background           Background     `json:"background"`
-	Cards                CardSettings   `json:"cards"`
-	Loader               LoaderSettings `json:"loader"`
-	GuestbookAutoPublish bool           `json:"guestbook_auto_publish"`
-	GuestbookMaxLength   int            `json:"guestbook_max_length"`
+	SiteTitle            string           `json:"site_title"`
+	Timezone             string           `json:"timezone"`
+	TimeFormat           string           `json:"time_format"`
+	ClockLabel           string           `json:"clock_label"`
+	Background           Background       `json:"background"`
+	Cards                CardSettings     `json:"cards"`
+	Loader               LoaderSettings   `json:"loader"`
+	Terminal             TerminalSettings `json:"terminal"`
+	GuestbookAutoPublish bool             `json:"guestbook_auto_publish"`
+	GuestbookMaxLength   int              `json:"guestbook_max_length"`
 }

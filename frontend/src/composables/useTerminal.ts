@@ -1,29 +1,33 @@
-import { nextTick, onBeforeUnmount, ref, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, type Ref } from 'vue'
 import { publicApi } from '@/api'
 import { errorMessage } from '@/api/client'
-import { createFastfetchLines } from '@/components/terminal/fastfetch'
+import { createFastfetchData, type FastfetchData } from '@/components/terminal/fastfetch'
 import { detectSystem } from '@/utils/system'
 import type { GuestbookEntry, Settings, SystemInfo, Visitor } from '@/types'
 
-export type TerminalPhase = 'initializing' | 'fastfetch' | 'clearing' | 'loading_guestbook' | 'interactive'
+export type TerminalPhase = 'initializing' | 'fastfetch' | 'fastfetch_loading' | 'clearing' | 'loading_guestbook' | 'interactive'
 export interface TerminalLine {
   id: number
   text: string
-  kind: 'plain' | 'muted' | 'ascii' | 'success' | 'error' | 'command'
+  kind: 'plain' | 'muted' | 'fastfetch' | 'success' | 'error' | 'command'
+  fastfetch?: FastfetchData
 }
 
 interface TerminalOptions {
   entries: Ref<GuestbookEntry[]>
   settings: Ref<Settings>
   visitor: Ref<Visitor | null>
+  terminalError: Ref<string>
+  ensureData: () => Promise<void>
 }
 
-export function useTerminal({ entries, settings, visitor }: TerminalOptions) {
+export function useTerminal({ entries, settings, visitor, terminalError, ensureData }: TerminalOptions) {
   const phase = ref<TerminalPhase>('initializing')
   const lines = ref<TerminalLine[]>([])
   const input = ref('')
   const submitting = ref(false)
   const system = ref<SystemInfo>({ os: 'Detecting…', distribution: 'unknown', distributionKey: 'unknown', browserName: 'Detecting…', browserVersion: '' })
+  const prompt = computed(() => `${system.value.os}@${visitor.value?.ip_address || 'unknown'}:~$`)
   const output = ref<HTMLElement | null>(null)
   const inputElement = ref<HTMLInputElement | null>(null)
   const history: string[] = []
@@ -35,8 +39,9 @@ export function useTerminal({ entries, settings, visitor }: TerminalOptions) {
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches
   }
 
-  function wait(ms: number, id: number) {
-    return new Promise<void>((resolve) => setTimeout(resolve, reducedMotion() ? 10 : ms)).then(() => {
+  function wait(ms: number, id: number, respectReducedMotion = true) {
+    const duration = respectReducedMotion && reducedMotion() ? 10 : ms
+    return new Promise<void>((resolve) => setTimeout(resolve, duration)).then(() => {
       if (id !== runId) throw new Error('cancelled')
     })
   }
@@ -44,6 +49,13 @@ export function useTerminal({ entries, settings, visitor }: TerminalOptions) {
   function append(text = '', kind: TerminalLine['kind'] = 'plain') {
     lines.value.push({ id: ++lineId, text, kind })
     scrollToBottom()
+  }
+
+  function appendFastfetch(data: FastfetchData, details = data.details) {
+    const fastfetch = { ...data, details }
+    lines.value.push({ id: ++lineId, text: '', kind: 'fastfetch', fastfetch })
+    scrollToBottom()
+    return fastfetch
   }
 
   function scrollToBottom() {
@@ -78,26 +90,35 @@ export function useTerminal({ entries, settings, visitor }: TerminalOptions) {
     submitting.value = false
     historyIndex = history.length
     try {
-      append('guest@homepage:~$ ./fastfetch', 'command')
-      await wait(260, id)
       append('Initializing visitor session...')
-      const detection = detectSystem().then((result) => { system.value = result })
+      const detection = detectSystem().then((result) => {
+        if (id === runId) system.value = result
+      })
       await wait(460, id)
       append('Detecting operating system...', 'muted')
       await detection
+      if (id !== runId) throw new Error('cancelled')
+      await ensureData()
+      if (id !== runId) throw new Error('cancelled')
+      if (terminalError.value) append(`Visitor context warning: ${terminalError.value}`, 'error')
       await wait(360, id)
+      append(`${prompt.value} ./fastfetch`, 'command')
+      await wait(260, id)
       phase.value = 'fastfetch'
-      for (const line of createFastfetchLines(system.value, visitor.value || undefined)) {
-        append(line, 'ascii')
+      const data = createFastfetchData(system.value, visitor.value || undefined)
+      const fastfetch = appendFastfetch(data, [])
+      for (const detail of data.details) {
+        fastfetch.details.push(detail)
         await wait(105, id)
       }
-      await wait(280, id)
+      phase.value = 'fastfetch_loading'
+      await wait(settings.value.terminal.fastfetch_loading_ms, id, false)
       phase.value = 'clearing'
-      append('guest@homepage:~$ clear', 'command')
+      append(`${prompt.value} clear`, 'command')
       await wait(420, id)
       lines.value = []
       phase.value = 'loading_guestbook'
-      append('guest@homepage:~$ cat /etc/guestbook/entries', 'command')
+      append(`${prompt.value} cat /etc/guestbook/entries`, 'command')
       await wait(200, id)
       append('Loading guestbook...')
       await wait(240, id)
@@ -136,7 +157,7 @@ export function useTerminal({ entries, settings, visitor }: TerminalOptions) {
         append('Anything else is submitted to the guestbook.', 'muted')
         return true
       case 'fastfetch':
-        createFastfetchLines(system.value, visitor.value || undefined).forEach((line) => append(line, 'ascii'))
+        appendFastfetch(createFastfetchData(system.value, visitor.value || undefined))
         return true
       case 'guestbook':
         printGuestbook()
@@ -146,7 +167,7 @@ export function useTerminal({ entries, settings, visitor }: TerminalOptions) {
         append('This terminal only accepts guestbook messages; it never executes shell commands.', 'muted')
         return true
       case 'whoami':
-        append(`guest · ${system.value.browserName} · ${visitor.value?.ip || 'IP pending'}`)
+        append(`${system.value.os} · ${system.value.browserName} · ${visitor.value?.ip_address || 'IP pending'}`)
         return true
       case 'date':
         append(new Date().toString())
@@ -169,8 +190,7 @@ export function useTerminal({ entries, settings, visitor }: TerminalOptions) {
     if (!message) return
     history.push(raw)
     historyIndex = history.length
-    const ip = visitor.value?.ip || 'unknown'
-    append(`${system.value.os}@${ip}:~$ ${raw}`, 'command')
+    append(`${prompt.value} ${raw}`, 'command')
     const command = message.toLowerCase()
     if (runCommand(command)) {
       input.value = ''
@@ -213,5 +233,5 @@ export function useTerminal({ entries, settings, visitor }: TerminalOptions) {
   }
 
   onBeforeUnmount(() => { runId += 1 })
-  return { phase, lines, input, submitting, system, output, inputElement, start, submit, scrollToBottom, navigateHistory }
+  return { phase, lines, input, submitting, system, prompt, output, inputElement, start, submit, scrollToBottom, navigateHistory }
 }

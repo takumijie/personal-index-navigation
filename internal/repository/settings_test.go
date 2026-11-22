@@ -26,10 +26,14 @@ func TestDecodeSettingsLegacyDataKeepsCardsEnabled(t *testing.T) {
 	if settings.Loader != (model.LoaderSettings{Theme: "dark"}) {
 		t.Fatalf("旧数据缺少 loader 字段时应使用默认主题且关闭音效，实际为 %+v", settings.Loader)
 	}
+	if settings.Terminal.FastfetchLoadingMS != 2000 {
+		t.Fatalf("旧数据缺少 terminal 字段时应使用默认停留时长，实际为 %+v", settings.Terminal)
+	}
 }
 
 func TestDecodeSettingsExplicitCardsOverrideDefaults(t *testing.T) {
 	data := `{"cards":{"profile":false,"navigation":true,"devices":false,"terminal":true,"clock":false},` +
+		`"terminal":{"fastfetch_loading_ms":3500},` +
 		`"loader":{"theme":"beige","sound_enabled":true,"watermark_title":"MY SPACE","badge_image":"/storage/images/badge.png"}}`
 
 	settings, err := decodeSettings(data)
@@ -43,6 +47,9 @@ func TestDecodeSettingsExplicitCardsOverrideDefaults(t *testing.T) {
 	if settings.Loader.Theme != "beige" || !settings.Loader.SoundEnabled ||
 		settings.Loader.WatermarkTitle != "MY SPACE" || settings.Loader.BadgeImage != "/storage/images/badge.png" {
 		t.Fatalf("loader 字段解析不正确: %+v", settings.Loader)
+	}
+	if settings.Terminal.FastfetchLoadingMS != 3500 {
+		t.Fatalf("显式 terminal 停留时长应保留，实际为 %+v", settings.Terminal)
 	}
 }
 

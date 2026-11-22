@@ -55,6 +55,10 @@ export interface LoaderSettings {
   badge_image: string
 }
 
+export interface TerminalSettings {
+  fastfetch_loading_ms: number
+}
+
 export interface Settings {
   site_title: string
   timezone: string
@@ -63,6 +67,7 @@ export interface Settings {
   background: BackgroundSettings
   cards: CardSettings
   loader: LoaderSettings
+  terminal: TerminalSettings
   guestbook_auto_publish: boolean
   guestbook_max_length: number
 }
@@ -92,7 +97,7 @@ export interface GuestbookEntry {
 }
 
 export interface Visitor {
-  ip: string
+  ip_address: string
   visit_time: string
 }
 

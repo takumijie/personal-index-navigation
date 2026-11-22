@@ -177,6 +177,7 @@ func TestAdminContentLifecycleAndPersistence(t *testing.T) {
 	settings := responseData[model.Settings](t, performJSON(t, app.router, http.MethodGet, "/api/v1/settings", nil, nil, http.StatusOK))
 	settings.SiteTitle = "Persisted site"
 	settings.GuestbookMaxLength = 123
+	settings.Terminal.FastfetchLoadingMS = 1500
 	performJSON(t, app.router, http.MethodPut, "/api/v1/admin/settings", settings, cookie, http.StatusOK)
 
 	sqlDB, err := app.db.DB()
@@ -196,7 +197,8 @@ func TestAdminContentLifecycleAndPersistence(t *testing.T) {
 
 	persistedProfile := responseData[model.SiteProfile](t, performJSON(t, app.router, http.MethodGet, "/api/v1/profile", nil, nil, http.StatusOK))
 	persistedSettings := responseData[model.Settings](t, performJSON(t, app.router, http.MethodGet, "/api/v1/settings", nil, nil, http.StatusOK))
-	if persistedProfile.Name != "Persisted Name" || persistedSettings.SiteTitle != "Persisted site" || persistedSettings.GuestbookMaxLength != 123 {
+	if persistedProfile.Name != "Persisted Name" || persistedSettings.SiteTitle != "Persisted site" ||
+		persistedSettings.GuestbookMaxLength != 123 || persistedSettings.Terminal.FastfetchLoadingMS != 1500 {
 		t.Fatal("SQLite 重开后资料或设置未保留")
 	}
 

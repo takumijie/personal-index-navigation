@@ -216,7 +216,7 @@ async function runSequence() {
   const now = new Date()
   const pad = (n: number, len = 2) => String(n).padStart(len, '0')
   const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} [${Intl.DateTimeFormat().resolvedOptions().timeZone || 'LOCAL'}]`
-  const ip = props.visitor?.ip || 'LOCAL-NODE'
+  const ip = props.visitor?.ip_address || 'LOCAL-NODE'
   const os = system ? `${system.os} // ${system.browserName} ${system.browserVersion}`.trim() : 'Unknown OS'
   const resolution = `${window.screen.width}×${window.screen.height}`
   const cores = navigator.hardwareConcurrency ? `${navigator.hardwareConcurrency} 线程` : '未知算力'

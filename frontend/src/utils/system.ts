@@ -1,29 +1,5 @@
 import type { SystemInfo } from '@/types'
 
-const distributions: Array<{ key: string; name: string; pattern: RegExp }> = [
-  { key: 'arch', name: 'Arch Linux', pattern: /arch linux/i },
-  { key: 'ubuntu', name: 'Ubuntu', pattern: /ubuntu/i },
-  { key: 'debian', name: 'Debian', pattern: /debian/i },
-  { key: 'mint', name: 'Linux Mint', pattern: /linux mint|linuxmint/i },
-  { key: 'fedora', name: 'Fedora', pattern: /fedora/i },
-  { key: 'manjaro', name: 'Manjaro', pattern: /manjaro/i },
-  { key: 'endeavouros', name: 'EndeavourOS', pattern: /endeavouros/i },
-  { key: 'opensuse', name: 'openSUSE', pattern: /opensuse/i },
-  { key: 'kali', name: 'Kali Linux', pattern: /kali/i },
-  { key: 'gentoo', name: 'Gentoo', pattern: /gentoo/i },
-  { key: 'alpine', name: 'Alpine Linux', pattern: /alpine/i },
-  { key: 'nixos', name: 'NixOS', pattern: /nixos/i },
-  { key: 'void', name: 'Void Linux', pattern: /void linux/i },
-  { key: 'popos', name: 'Pop!_OS', pattern: /pop!?_os|pop os/i },
-  { key: 'elementary', name: 'elementary OS', pattern: /elementary os|elementaryos/i },
-  { key: 'zorin', name: 'Zorin OS', pattern: /zorin/i },
-  { key: 'rocky', name: 'Rocky Linux', pattern: /rocky linux/i },
-  { key: 'almalinux', name: 'AlmaLinux', pattern: /almalinux/i },
-  { key: 'centos', name: 'CentOS', pattern: /centos/i },
-  { key: 'rhel', name: 'Red Hat Enterprise Linux', pattern: /red hat enterprise|rhel/i },
-  { key: 'deepin', name: 'deepin', pattern: /deepin/i },
-]
-
 function browserInfo(ua: string): { name: string; version: string } {
   const matchers: Array<[string, RegExp]> = [
     ['Edge', /Edg(?:e|A|iOS)?\/([\d.]+)/],
@@ -53,11 +29,7 @@ export async function detectSystem(): Promise<SystemInfo> {
   let os = 'Unknown OS'
   let distributionKey = 'unknown'
 
-  const distro = distributions.find((item) => item.pattern.test(source))
-  if (distro) {
-    os = distro.name
-    distributionKey = distro.key
-  } else if (/Android/i.test(source)) {
+  if (/Android/i.test(source)) {
     const version = ua.match(/Android\s([\d.]+)/i)?.[1] || ''
     os = `Android ${version}`.trim()
     distributionKey = 'android'

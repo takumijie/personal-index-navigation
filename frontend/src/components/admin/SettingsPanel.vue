@@ -38,6 +38,7 @@ function validate() {
   if (form.value.loader.watermark_caption.length > 120) errors.watermark_caption = '水印小字不能超过 120 字符'
   if (form.value.loader.badge_image && !validWebUrl(form.value.loader.badge_image) && !form.value.loader.badge_image.startsWith('/')) errors.badge_image = '请输入有效的徽章图片地址'
   if (form.value.background.duration_ms < 0 || form.value.background.duration_ms > 10000) errors.duration_ms = '过渡时长应在 0–10000 毫秒之间'
+  if (form.value.terminal.fastfetch_loading_ms < 0 || form.value.terminal.fastfetch_loading_ms > 10000) errors.fastfetch_loading_ms = 'Fastfetch 停留时长应在 0–10000 毫秒之间'
   if (form.value.guestbook_max_length < 1 || form.value.guestbook_max_length > 2000) errors.guestbook_max_length = '留言长度应在 1–2000 之间'
   fieldErrors.value = errors
   return !Object.keys(errors).length
@@ -114,10 +115,11 @@ async function save() {
         </section>
 
         <section>
-          <h3 class="mb-4 text-xs font-semibold tracking-wider text-violet-200/65">留言规则</h3>
+          <h3 class="mb-4 text-xs font-semibold tracking-wider text-violet-200/65">终端与留言</h3>
           <div class="grid items-center gap-5 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 min-[760px]:grid-cols-2">
-            <ToggleSwitch v-model="form.guestbook_auto_publish" label="新留言自动发布" />
+            <FormField label="Fastfetch 停留时长" :error="fieldErrors.fastfetch_loading_ms" hint="毫秒"><input v-model.number="form.terminal.fastfetch_loading_ms" class="field" type="number" min="0" max="10000" step="100" /></FormField>
             <FormField label="留言最大长度" :error="fieldErrors.guestbook_max_length" hint="字符"><input v-model.number="form.guestbook_max_length" class="field" type="number" min="1" max="2000" /></FormField>
+            <ToggleSwitch v-model="form.guestbook_auto_publish" label="新留言自动发布" />
           </div>
         </section>
       </form>

@@ -34,7 +34,7 @@ export const mockGuestbook: GuestbookEntry[] = [
   { id: 2, system_name: 'macOS', distribution: 'macos', browser_name: 'Safari', browser_version: '18.1', ip_address: '10.24.8.6', message: '从终端留言，是一件很酷的事。', status: 'published', created_at: new Date(Date.now() - 43200000).toISOString() },
 ]
 
-export const mockVisitor: Visitor = { ip: '127.0.0.1', visit_time: new Date().toISOString() }
+export const mockVisitor: Visitor = { ip_address: '127.0.0.1', visit_time: new Date().toISOString() }
 export const mockSettings: Settings = {
   ...DEFAULT_SETTINGS,
   site_title: '暮色的数字角落',

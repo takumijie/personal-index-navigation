@@ -14,22 +14,46 @@ export function useHomeData() {
   const visitor = ref<Visitor | null>(null)
   const loading = ref(true)
   const error = ref('')
+  const terminalError = ref('')
+  let terminalDataTask: Promise<void> | null = null
+
+  function loadTerminalData(): Promise<void> {
+    if (terminalDataTask) return terminalDataTask
+    terminalDataTask = (async () => {
+      terminalError.value = ''
+      try {
+        const [guestbookData, visitorData] = await Promise.all([publicApi.guestbook(), publicApi.visitor()])
+        guestbook.value = guestbookData
+        visitor.value = visitorData
+      } catch (reason) {
+        if (import.meta.env.DEV) {
+          const mock = await import('@/api/mock')
+          guestbook.value = mock.mockGuestbook
+          visitor.value = mock.mockVisitor
+        } else {
+          guestbook.value = []
+          visitor.value = null
+          terminalError.value = errorMessage(reason)
+        }
+      }
+    })()
+    return terminalDataTask
+  }
 
   async function load() {
     loading.value = true
     error.value = ''
+    terminalDataTask = null
+    void loadTerminalData()
     try {
-      const [profileData, navigationData, deviceData, settingsData, guestbookData, trackData, visitorData] = await Promise.all([
-        publicApi.profile(), publicApi.navigation(), publicApi.devices(), publicApi.settings(),
-        publicApi.guestbook(), publicApi.playlist(), publicApi.visitor(),
+      const [profileData, navigationData, deviceData, settingsData, trackData] = await Promise.all([
+        publicApi.profile(), publicApi.navigation(), publicApi.devices(), publicApi.settings(), publicApi.playlist(),
       ])
       profile.value = profileData
       navigation.value = navigationData
       devices.value = deviceData
       settings.value = settingsData
-      guestbook.value = guestbookData
       tracks.value = trackData
-      visitor.value = visitorData
     } catch (reason) {
       if (import.meta.env.DEV) {
         const mock = await import('@/api/mock')
@@ -37,9 +61,7 @@ export function useHomeData() {
         navigation.value = mock.mockNavigation
         devices.value = mock.mockDevices
         settings.value = mock.mockSettings
-        guestbook.value = mock.mockGuestbook
         tracks.value = mock.mockTracks
-        visitor.value = mock.mockVisitor
         error.value = '当前为开发预览数据，后端连接不可用'
       } else {
         error.value = errorMessage(reason)
@@ -50,5 +72,5 @@ export function useHomeData() {
   }
 
   onMounted(load)
-  return { profile, navigation, devices, settings, guestbook, tracks, visitor, loading, error, reload: load }
+  return { profile, navigation, devices, settings, guestbook, tracks, visitor, loading, error, terminalError, loadTerminalData, reload: load }
 }

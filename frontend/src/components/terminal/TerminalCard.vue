@@ -1,31 +1,40 @@
 <script setup lang="ts">
-import { computed, onMounted, type Ref } from 'vue'
+import { computed, watch, type Ref } from 'vue'
 import { RotateCcw, TerminalSquare } from 'lucide-vue-next'
 import { useTerminal } from '@/composables/useTerminal'
 import type { GuestbookEntry, Settings, Visitor } from '@/types'
 
-const props = defineProps<{ entries: GuestbookEntry[]; settings: Settings; visitor: Visitor | null }>()
+const props = defineProps<{
+  active: boolean
+  entries: GuestbookEntry[]
+  settings: Settings
+  visitor: Visitor | null
+  terminalError: string
+  loadTerminalData: () => Promise<void>
+}>()
 const emit = defineEmits<{ 'update:entries': [entries: GuestbookEntry[]] }>()
 const entriesProxy = computed({
   get: () => props.entries,
   set: (value: GuestbookEntry[]) => emit('update:entries', value),
 })
 const {
-  phase, lines, input, submitting, output, inputElement, start, submit, navigateHistory,
+  phase, lines, input, submitting, prompt, output, inputElement, start, submit, navigateHistory,
 } = useTerminal({
   entries: entriesProxy as Ref<GuestbookEntry[]>,
   settings: computed(() => props.settings),
   visitor: computed(() => props.visitor),
+  terminalError: computed(() => props.terminalError),
+  ensureData: props.loadTerminalData,
 })
 
 const phaseLabel = computed(() => ({
-  initializing: 'INITIALIZING', fastfetch: 'FASTFETCH', clearing: 'CLEARING',
+  initializing: 'INITIALIZING', fastfetch: 'FASTFETCH', fastfetch_loading: 'LOADING', clearing: 'CLEARING',
   loading_guestbook: 'LOADING GUESTBOOK', interactive: submitting.value ? 'SENDING' : 'INTERACTIVE',
 }[phase.value]))
 
 function lineClass(kind: string) {
   return {
-    plain: 'text-[#c7d4d9]', muted: 'text-[#71848c]', ascii: 'text-[#a9d9cd]',
+    plain: 'text-[#c7d4d9]', muted: 'text-[#71848c]',
     success: 'text-[#80d7ac]', error: 'text-[#f0a0aa]', command: 'text-[#ddd3ff]',
   }[kind] || 'text-[#c7d4d9]'
 }
@@ -34,7 +43,9 @@ function focusInput() {
   if (phase.value === 'interactive') inputElement.value?.focus()
 }
 
-onMounted(start)
+watch(() => props.active, (active) => {
+  if (active) void start()
+}, { immediate: true })
 </script>
 
 <template>
@@ -46,7 +57,7 @@ onMounted(start)
           <span class="size-2.5 rounded-full bg-[#f2cc60]/75" />
           <span class="size-2.5 rounded-full bg-[#7ee2a8]/75" />
         </div>
-        <div class="flex items-center gap-2 text-[11px] text-white/45"><TerminalSquare :size="13" /> visitor@personal-space: ~</div>
+        <div class="flex min-w-0 items-center gap-2 truncate font-mono text-[11px] text-white/45"><TerminalSquare class="shrink-0" :size="13" />{{ prompt }}</div>
       </div>
       <div class="flex items-center gap-2">
         <span class="hidden items-center gap-1.5 font-mono text-[8px] tracking-[0.13em] text-white/28 min-[420px]:flex">
@@ -58,11 +69,30 @@ onMounted(start)
 
     <div ref="output" class="terminal-body fine-scrollbar relative flex-1 overflow-auto px-4 py-4 font-mono text-[11px] leading-[1.65] min-[640px]:px-5 min-[640px]:text-[12px]" @click="focusInput">
       <div class="contents">
-        <div v-for="line in lines" :key="line.id" class="min-h-[1.65em] whitespace-pre-wrap break-words" :class="lineClass(line.kind)">{{ line.text || ' ' }}</div>
+        <template v-for="line in lines" :key="line.id">
+          <div v-if="line.kind === 'fastfetch' && line.fastfetch" class="fastfetch-block">
+            <div class="fastfetch-logo">
+              <img v-if="line.fastfetch.logo" :src="line.fastfetch.logo" alt="" />
+              <span v-else aria-hidden="true">?</span>
+            </div>
+            <div class="min-w-0">
+              <div class="fastfetch-identity">{{ line.fastfetch.identity }}</div>
+              <div class="fastfetch-separator">{{ '-'.repeat(line.fastfetch.identity.length) }}</div>
+              <div v-for="detail in line.fastfetch.details" :key="detail.label" class="min-h-[1.65em]">
+                <span class="fastfetch-label">{{ detail.label }}:</span>
+                <span class="fastfetch-value"> {{ detail.value }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-else class="min-h-[1.65em] whitespace-pre-wrap break-words" :class="lineClass(line.kind)">{{ line.text || ' ' }}</div>
+        </template>
+        <div v-if="phase === 'fastfetch_loading'" class="flex min-h-[1.65em] items-center text-[#a9d9cd]" aria-label="Loading...">
+          Loading<span class="ml-1 inline-flex" aria-hidden="true"><span class="loading-dot">.</span><span class="loading-dot">.</span><span class="loading-dot">.</span></span>
+        </div>
       </div>
 
       <div v-if="phase === 'interactive'" class="flex min-h-[1.7em] items-start text-[#ddd3ff]">
-        <span class="mr-2 shrink-0 text-[#a99ad8]">guest@homepage:~$</span>
+        <span class="mr-2 shrink-0 text-[#a99ad8]">{{ prompt }}</span>
         <div class="relative min-w-0 flex-1">
           <input
             ref="inputElement"
@@ -96,5 +126,56 @@ onMounted(start)
 .terminal-body {
   background: linear-gradient(145deg, rgba(4, 12, 18, 0.53), rgba(8, 10, 22, 0.28));
   text-shadow: 0 0 12px rgba(169, 217, 205, 0.08);
+}
+.fastfetch-block {
+  display: grid;
+  grid-template-columns: clamp(76px, 16%, 124px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  padding: 4px 0 8px;
+}
+.fastfetch-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  color: #71848c;
+  font-size: 28px;
+}
+.fastfetch-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 12px rgba(0, 0, 0, 0.22));
+}
+.fastfetch-identity {
+  color: #80d7ac;
+  overflow-wrap: anywhere;
+}
+.fastfetch-separator { color: #526b73; }
+.fastfetch-label { color: #79c7d8; }
+.fastfetch-value {
+  color: #d4e0e4;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  .fastfetch-block { grid-template-columns: 72px minmax(0, 1fr); gap: 12px; }
+}
+@media (max-width: 380px) {
+  .fastfetch-block { grid-template-columns: minmax(0, 1fr); }
+  .fastfetch-logo { width: 72px; }
+}
+.loading-dot {
+  animation: loading-dot 1.2s ease-in-out infinite;
+}
+.loading-dot:nth-child(2) { animation-delay: 160ms; }
+.loading-dot:nth-child(3) { animation-delay: 320ms; }
+@keyframes loading-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-dot { animation: none; opacity: 0.75; }
 }
 </style>
