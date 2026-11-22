@@ -1,0 +1,15 @@
+.git
+.gitignore
+**/.DS_Store
+**/node_modules
+**/dist
+frontend/coverage
+/data/*
+/storage/music/*
+/storage/images/*
+*.log
+*.db
+*.db-shm
+*.db-wal
+.vscode
+.trae

@@ -1,0 +1,16 @@
+export default String.raw`
+         -/oyddmdhs+:.
+     -o/yNMMMMMMMMNNmhy+-
+   +smMMMMMMMMMMMMMMMMdy:
+  mMMMMMMMMMMMMMMMMMMMMMN
+  NMMMMMMMMMMMMMMMMMMMMM-
+  MMMMMMMMMMMMMMMMMMMMMm
+  hMMMMMMMMMMMMMMMMMMMo
+  /MMMMMMMMMMMMMMMMMN+
+   mMMMMMMMMMMMMMMNs
+    yMMMMMMMMMMMNy'
+     +NMMMMMMMN+'
+       /NMMN+'
+        :my.
+        GENTOO
+`

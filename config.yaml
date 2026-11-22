@@ -1,0 +1,15 @@
+server:
+  listen: "0.0.0.0"
+  port: 8081
+  mode: debug
+  trusted_proxies: []
+database:
+  path: data/homepage.db
+storage:
+  path: storage
+admin:
+  username: admin
+  password: admin123
+upload:
+  max_image_bytes: 10485760
+  max_music_bytes: 52428800
