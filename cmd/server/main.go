@@ -53,15 +53,12 @@ func run() error {
 		return fmt.Errorf("初始化数据: %w", err)
 	}
 	repo := repository.New(db)
-	content := service.NewContentService(repo)
-	auth := service.NewAuthService(repo)
 	uploads := service.NewUploadService(cfg.Storage.Path, cfg.Upload.MaxImageBytes, cfg.Upload.MaxMusicBytes)
+	content := service.NewContentService(repo, uploads)
+	auth := service.NewAuthService(repo)
 	music := service.NewMusicService(repo, cfg.Storage.Path)
 	providerClient := &http.Client{Timeout: 20 * time.Second}
-	netease, err := service.NewNeteaseService(repo, providerClient, "https://music-api.ilibilib.top")
-	if err != nil {
-		return fmt.Errorf("初始化网易云音乐: %w", err)
-	}
+	netease := service.NewNeteaseService(repo, providerClient)
 	s3 := service.NewS3Service(repo, providerClient)
 	music.RegisterProvider("netease", netease)
 	music.RegisterProvider("s3", s3)

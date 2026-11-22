@@ -114,6 +114,10 @@ export interface Lyrics {
   format: 'lrc'
 }
 
+export interface NeteaseConfig {
+  base_url: string
+}
+
 export interface NeteaseStatus {
   authenticated: boolean
   nickname?: string

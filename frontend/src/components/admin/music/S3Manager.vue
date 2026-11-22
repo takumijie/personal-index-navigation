@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircle2, ChevronLeft, ChevronRight, Cloud, Download, FileAudio, RefreshCw, Save } from 'lucide-vue-next'
+import { CheckCircle2, ChevronLeft, ChevronRight, Cloud, Download, FileAudio, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
 import { adminApi } from '@/api'
 import { errorMessage } from '@/api/client'
-import type { ImportResult, S3Config, S3Object } from '@/types'
+import type { ImportResult, Playlist, S3Config, S3Object } from '@/types'
 import AlertMessage from '@/components/common/AlertMessage.vue'
 import FormField from '@/components/common/FormField.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -41,18 +41,39 @@ const nextToken = ref('')
 const selectedObjects = ref<S3Object[]>([])
 const importName = ref('')
 const importing = ref(false)
+const playlists = ref<Playlist[]>([])
+const appendPlaylistID = ref<number | null>(null)
+const appending = ref(false)
+const deletingKey = ref('')
 
 const allCurrentSelected = computed(() => objects.value.length > 0 && objects.value.every((object) => isSelected(object)))
+const objectActionBusy = computed(() => importing.value || appending.value || deletingKey.value !== '')
 
 function applyConfig(config: S3Config) {
   form.value = { ...emptyConfig(), ...config, secret_access_key: '' }
 }
 
-async function loadConfig() {
+async function loadPlaylists() {
+  playlists.value = (await adminApi.playlists()).sort((a, b) => a.sort - b.sort || a.id - b.id)
+  if (!playlists.value.some((playlist) => playlist.id === appendPlaylistID.value)) {
+    appendPlaylistID.value = playlists.value[0]?.id ?? null
+  }
+}
+
+async function refreshPlaylists() {
+  try {
+    await loadPlaylists()
+  } catch (reason) {
+    objectError.value = `播放列表刷新失败：${errorMessage(reason)}`
+  }
+}
+
+async function load() {
   loading.value = true
   error.value = ''
   try {
-    applyConfig(await adminApi.s3Config())
+    const [config] = await Promise.all([adminApi.s3Config(), loadPlaylists()])
+    applyConfig(config)
   } catch (reason) {
     error.value = errorMessage(reason)
   } finally {
@@ -184,6 +205,14 @@ function formatDate(value?: string) {
   return value ? new Date(value).toLocaleString() : ''
 }
 
+function validSelection() {
+  if (!selectedObjects.value.length || selectedObjects.value.length > 100) {
+    objectError.value = '请选择 1 至 100 个音频对象'
+    return false
+  }
+  return true
+}
+
 async function importSelected() {
   objectError.value = ''
   objectSuccess.value = ''
@@ -191,16 +220,14 @@ async function importSelected() {
     objectError.value = '请输入播放列表名称'
     return
   }
-  if (!selectedObjects.value.length || selectedObjects.value.length > 100) {
-    objectError.value = '请选择 1 至 100 个音频对象'
-    return
-  }
+  if (!validSelection()) return
   importing.value = true
   try {
     const result: ImportResult = await adminApi.importS3(importName.value.trim(), selectedObjects.value.map((object) => object.key))
     objectSuccess.value = `播放列表“${result.playlist.name}”已保存：导入 ${result.imported} 首，重复 ${result.duplicates} 首`
     selectedObjects.value = []
     importName.value = ''
+    await refreshPlaylists()
   } catch (reason) {
     objectError.value = errorMessage(reason)
   } finally {
@@ -208,7 +235,48 @@ async function importSelected() {
   }
 }
 
-onMounted(loadConfig)
+async function appendSelected() {
+  objectError.value = ''
+  objectSuccess.value = ''
+  if (!appendPlaylistID.value) {
+    objectError.value = '请选择目标播放列表'
+    return
+  }
+  if (!validSelection()) return
+  appending.value = true
+  try {
+    const result = await adminApi.appendS3(appendPlaylistID.value, selectedObjects.value.map((object) => object.key))
+    objectSuccess.value = `已追加到“${result.playlist.name}”：新增 ${result.imported} 首，重复 ${result.duplicates} 首`
+    selectedObjects.value = []
+    await refreshPlaylists()
+  } catch (reason) {
+    objectError.value = errorMessage(reason)
+  } finally {
+    appending.value = false
+  }
+}
+
+async function removeObject(object: S3Object) {
+  if (deletingKey.value) return
+  if (!window.confirm(`确定删除 OSS 对象“${object.key}”吗？将同时删除音频对象、对应曲目及所有播放列表关联，且无法恢复。`)) return
+  deletingKey.value = object.key
+  objectError.value = ''
+  objectSuccess.value = ''
+  try {
+    await adminApi.deleteS3Object(object.key)
+    objects.value = objects.value.filter((item) => item.key !== object.key)
+    selectedObjects.value = selectedObjects.value.filter((item) => item.key !== object.key)
+    objectSuccess.value = `OSS 对象“${fileName(object.key)}”及对应曲目关联已删除`
+    await refreshPlaylists()
+  } catch (reason) {
+    objectError.value = errorMessage(reason)
+    await refreshPlaylists()
+  } finally {
+    deletingKey.value = ''
+  }
+}
+
+onMounted(load)
 </script>
 
 <template>
@@ -263,18 +331,23 @@ onMounted(loadConfig)
       <template v-else-if="objectsLoaded">
         <div v-if="objects.length" class="mt-5">
           <label class="mb-3 flex cursor-pointer items-center gap-2 text-xs text-white/40">
-            <input type="checkbox" class="accent-violet-500" :checked="allCurrentSelected" @change="toggleAll" />选择本页
+            <input type="checkbox" class="accent-violet-500" :checked="allCurrentSelected" :disabled="objectActionBusy" @change="toggleAll" />选择本页
           </label>
           <div class="fine-scrollbar max-h-[28rem] space-y-2 overflow-y-auto pr-1">
-            <label v-for="object in objects" :key="object.key" class="flex cursor-pointer items-center gap-3 rounded-xl border border-white/[0.055] bg-black/10 p-3 transition-colors hover:bg-white/[0.035]">
-              <input type="checkbox" class="shrink-0 accent-violet-500" :checked="isSelected(object)" @change="toggleObject(object)" />
-              <span class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-indigo-200/50"><FileAudio :size="17" /></span>
-              <span class="min-w-0 flex-1">
-                <span class="block truncate text-sm text-white/75" :title="object.key">{{ fileName(object.key) }}</span>
-                <span class="mt-1 block truncate text-[11px] text-white/30" :title="object.key">{{ object.key }}</span>
-                <span class="mt-1 block text-[10px] text-white/25">{{ formatSize(object.size) }}<template v-if="object.last_modified"> · {{ formatDate(object.last_modified) }}</template></span>
-              </span>
-            </label>
+            <div v-for="object in objects" :key="object.key" class="flex items-center gap-2 rounded-xl border border-white/[0.055] bg-black/10 p-3 transition-colors hover:bg-white/[0.035]">
+              <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                <input type="checkbox" class="shrink-0 accent-violet-500" :checked="isSelected(object)" :disabled="objectActionBusy" @change="toggleObject(object)" />
+                <span class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-indigo-200/50"><FileAudio :size="17" /></span>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-sm text-white/75" :title="object.key">{{ fileName(object.key) }}</span>
+                  <span class="mt-1 block truncate text-[11px] text-white/30" :title="object.key">{{ object.key }}</span>
+                  <span class="mt-1 block text-[10px] text-white/25">{{ formatSize(object.size) }}<template v-if="object.last_modified"> · {{ formatDate(object.last_modified) }}</template></span>
+                </span>
+              </label>
+              <button class="icon-button size-9 shrink-0 hover:bg-rose-400/10 hover:text-rose-200" type="button" :title="`删除 OSS 对象 ${object.key}`" :aria-label="`删除 OSS 对象 ${object.key}`" :disabled="objectActionBusy" @click="removeObject(object)">
+                <LoadingSpinner v-if="deletingKey === object.key" label="" /><Trash2 v-else :size="15" />
+              </button>
+            </div>
           </div>
         </div>
         <p v-else class="py-10 text-center text-sm text-white/30">此前缀下没有可展示的音频对象</p>
@@ -285,10 +358,25 @@ onMounted(loadConfig)
           <button class="icon-button" type="button" aria-label="下一页" :disabled="!nextToken" @click="loadObjects(tokenIndex + 1)"><ChevronRight :size="16" /></button>
         </div>
 
-        <form class="mt-5 flex flex-col gap-2 border-t border-white/[0.06] pt-4 min-[560px]:flex-row" @submit.prevent="importSelected">
-          <input v-model="importName" class="field" placeholder="导入为播放列表名称" maxlength="80" />
-          <button class="primary-button shrink-0" type="submit" :disabled="importing || !selectedObjects.length"><Download :size="14" />{{ importing ? '导入中…' : `批量导入（${selectedObjects.length}）` }}</button>
-        </form>
+        <div class="mt-5 grid gap-5 border-t border-white/[0.06] pt-4 min-[900px]:grid-cols-2">
+          <form class="space-y-2" @submit.prevent="importSelected">
+            <label class="block text-xs text-white/45" for="s3-import-name">创建新列表导入</label>
+            <div class="flex flex-col gap-2 min-[560px]:flex-row min-[900px]:flex-col min-[1100px]:flex-row">
+              <input id="s3-import-name" v-model="importName" class="field" placeholder="新播放列表名称" maxlength="80" />
+              <button class="primary-button shrink-0" type="submit" :disabled="objectActionBusy || !selectedObjects.length"><Download :size="14" />{{ importing ? '导入中…' : `创建列表（${selectedObjects.length}）` }}</button>
+            </div>
+          </form>
+          <form class="space-y-2" @submit.prevent="appendSelected">
+            <label class="block text-xs text-white/45" for="s3-append-playlist">追加到已有列表</label>
+            <div class="flex flex-col gap-2 min-[560px]:flex-row min-[900px]:flex-col min-[1100px]:flex-row">
+              <select id="s3-append-playlist" v-model.number="appendPlaylistID" class="field" :disabled="!playlists.length">
+                <option v-for="playlist in playlists" :key="playlist.id" :value="playlist.id">{{ playlist.name }}</option>
+              </select>
+              <button class="secondary-button shrink-0" type="submit" :disabled="objectActionBusy || !selectedObjects.length || !appendPlaylistID"><Download :size="14" />{{ appending ? '追加中…' : `追加歌曲（${selectedObjects.length}）` }}</button>
+            </div>
+            <p v-if="!playlists.length" class="text-[10px] text-white/30">暂无已有列表，可先创建新列表导入。</p>
+          </form>
+        </div>
       </template>
       <p v-else-if="!objectError" class="py-10 text-center text-sm text-white/30">保存配置后，按前缀读取音频对象。</p>
     </section>

@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"gorm.io/gorm"
 )
 
 const (
@@ -159,28 +160,73 @@ func (s *S3Service) ListObjects(ctx context.Context, prefix, continuationToken s
 }
 
 func (s *S3Service) Import(_ context.Context, name string, sort int, keys []string) (model.Playlist, int, error) {
-	if len(keys) == 0 || len(keys) > s3MaxObjects {
-		return model.Playlist{}, 0, invalid("请选择 1 至 100 个音频对象")
-	}
 	config, err := s.loadConfig()
 	if err != nil {
 		return model.Playlist{}, 0, err
 	}
 	playlist := model.Playlist{Name: name, Sort: sort, Enabled: true, Tracks: make([]model.MusicTrack, 0, len(keys))}
-	if err := validatePlaylist(playlist); err != nil {
+	if err := validatePlaylist(&playlist); err != nil {
 		return model.Playlist{}, 0, err
+	}
+	tracks, err := s3TracksForKeys(config, keys)
+	if err != nil {
+		return model.Playlist{}, 0, err
+	}
+	playlist, duplicates, err := s.repo.ImportPlaylist(playlist, tracks)
+	return playlist, duplicates, playlistStoreError(err)
+}
+
+func (s *S3Service) AppendToPlaylist(playlistID uint, keys []string) (model.Playlist, int, int, error) {
+	config, err := s.loadConfig()
+	if err != nil {
+		return model.Playlist{}, 0, 0, err
+	}
+	tracks, err := s3TracksForKeys(config, keys)
+	if err != nil {
+		return model.Playlist{}, 0, 0, err
+	}
+	playlist, imported, duplicates, err := s.repo.AppendPlaylistTracks(playlistID, tracks)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Playlist{}, 0, 0, notFound("播放列表不存在")
+	}
+	return playlist, imported, duplicates, err
+}
+
+func (s *S3Service) DeleteObject(ctx context.Context, key string) error {
+	config, err := s.loadConfig()
+	if err != nil {
+		return err
+	}
+	if _, err := s3TracksForKeys(config, []string{key}); err != nil {
+		return err
+	}
+	if err := s.repo.DeleteS3Tracks(key); err != nil {
+		return err
+	}
+	_, err = s.client(config).DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(config.Bucket), Key: aws.String(key),
+	})
+	if err == nil || isS3ObjectNotFound(err) {
+		return nil
+	}
+	return failure(http.StatusBadGateway, "s3_object_delete_failed", "数据库关联已清理，但 OSS 对象删除失败，请重试")
+}
+
+func s3TracksForKeys(config S3Config, keys []string) ([]model.MusicTrack, error) {
+	if len(keys) == 0 || len(keys) > s3MaxObjects {
+		return nil, invalid("请选择 1 至 100 个音频对象")
 	}
 	tracks := make([]model.MusicTrack, 0, len(keys))
 	seen := make(map[string]struct{}, len(keys))
 	for index, key := range keys {
 		if !validS3ObjectKey(key) || !allowedExtension("music", strings.ToLower(path.Ext(key))) {
-			return model.Playlist{}, 0, invalid("S3 Object Key 或音频扩展名无效")
+			return nil, invalid("S3 Object Key 或音频扩展名无效")
 		}
 		if !strings.HasPrefix(key, config.Prefix) {
-			return model.Playlist{}, 0, invalid("音频对象不在配置的 S3 前缀内")
+			return nil, invalid("音频对象不在配置的 S3 前缀内")
 		}
 		if _, ok := seen[key]; ok {
-			return model.Playlist{}, 0, invalid("不能重复选择同一音频对象")
+			return nil, invalid("不能重复选择同一音频对象")
 		}
 		seen[key] = struct{}{}
 		track := model.MusicTrack{
@@ -191,11 +237,11 @@ func (s *S3Service) Import(_ context.Context, name string, sort int, keys []stri
 			Enabled:   true,
 		}
 		if err := validateTrack(track); err != nil {
-			return model.Playlist{}, 0, err
+			return nil, err
 		}
 		tracks = append(tracks, track)
 	}
-	return s.repo.ImportPlaylist(playlist, tracks)
+	return tracks, nil
 }
 
 func (s *S3Service) Playback(ctx context.Context, track model.MusicTrack) (Playback, error) {

@@ -15,11 +15,12 @@ import (
 
 type ContentService struct {
 	repo           *repository.Repository
+	uploads        *UploadService
 	guestbookLimit *IPRateLimiter
 }
 
-func NewContentService(repo *repository.Repository) *ContentService {
-	return &ContentService{repo: repo, guestbookLimit: NewIPRateLimiter(5, time.Minute)}
+func NewContentService(repo *repository.Repository, uploads *UploadService) *ContentService {
+	return &ContentService{repo: repo, uploads: uploads, guestbookLimit: NewIPRateLimiter(5, time.Minute)}
 }
 
 func (s *ContentService) Profile() (model.SiteProfile, error) { return s.repo.Profile() }
@@ -231,10 +232,29 @@ func (s *ContentService) UpdateTrack(id uint, item model.MusicTrack) (model.Musi
 }
 
 func (s *ContentService) DeleteTrack(id uint) error {
-	if _, err := s.repo.TrackByID(id); errors.Is(err, gorm.ErrRecordNotFound) {
+	track, err := s.repo.TrackByID(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return notFound("曲目不存在")
-	} else if err != nil {
+	}
+	if err != nil {
 		return err
+	}
+	switch track.Source {
+	case "local":
+		shared, err := s.repo.HasOtherLocalTrackURL(track.ID, track.URL)
+		if err != nil {
+			return err
+		}
+		if !shared {
+			if err := s.uploads.DeleteMusic(track.URL); err != nil {
+				return err
+			}
+		}
+	case "remote", "netease":
+	case "s3":
+		return invalid("S3 曲目请从对象存储页删除对应音频对象")
+	default:
+		return invalid("曲目来源无效")
 	}
 	return s.repo.DeleteTrack(id)
 }
@@ -256,10 +276,10 @@ func (s *ContentService) PlaylistByID(id uint, enabledOnly bool) (model.Playlist
 func (s *ContentService) CreatePlaylist(item model.Playlist) (model.Playlist, error) {
 	item.ID = 0
 	item.Tracks = nil
-	if err := validatePlaylist(item); err != nil {
+	if err := validatePlaylist(&item); err != nil {
 		return item, err
 	}
-	return item, s.repo.SavePlaylist(&item)
+	return item, playlistStoreError(s.repo.SavePlaylist(&item))
 }
 
 func (s *ContentService) UpdatePlaylist(id uint, item model.Playlist) (model.Playlist, error) {
@@ -270,11 +290,11 @@ func (s *ContentService) UpdatePlaylist(id uint, item model.Playlist) (model.Pla
 	if err != nil {
 		return item, err
 	}
-	if err := validatePlaylist(item); err != nil {
+	if err := validatePlaylist(&item); err != nil {
 		return item, err
 	}
 	item.ID, item.CreatedAt, item.Tracks = current.ID, current.CreatedAt, current.Tracks
-	return item, s.repo.SavePlaylist(&item)
+	return item, playlistStoreError(s.repo.SavePlaylist(&item))
 }
 
 func (s *ContentService) DeletePlaylist(id uint) error {

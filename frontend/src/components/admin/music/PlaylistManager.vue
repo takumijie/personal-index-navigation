@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowDown, ArrowUp, ListMusic, Pencil, Plus, Save, Trash2, X } from 'lucide-vue-next'
+import { ListMusic, Pencil, Plus, Save, Trash2, X } from 'lucide-vue-next'
 import { adminApi, publicApi } from '@/api'
 import { errorMessage } from '@/api/client'
 import type { Playlist, Settings, Track } from '@/types'
@@ -13,17 +13,15 @@ type PlaylistForm = Pick<Playlist, 'name' | 'sort' | 'enabled'>
 
 const blank = (): PlaylistForm => ({ name: '', sort: 0, enabled: true })
 const playlists = ref<Playlist[]>([])
-const tracks = ref<Track[]>([])
 const settings = ref<Settings | null>(null)
 const selectedPlaylistId = ref<number | null>(null)
-const orderedTracks = ref<Track[]>([])
 const form = ref<PlaylistForm>(blank())
 const editingId = ref<number | null>(null)
 const formOpen = ref(false)
 const loading = ref(true)
 const saving = ref(false)
 const savingPlayback = ref(false)
-const savingTracks = ref(false)
+const deletingTrackId = ref<number | null>(null)
 const deletingId = ref<number | null>(null)
 const error = ref('')
 const success = ref('')
@@ -31,31 +29,20 @@ const fieldErrors = ref<Record<string, string>>({})
 
 const selectedPlaylist = computed(() => playlists.value.find((item) => item.id === selectedPlaylistId.value) ?? null)
 const enabledPlaylists = computed(() => playlists.value.filter((item) => item.enabled))
-const selectedTrackIds = computed(() => new Set(orderedTracks.value.map((track) => track.id)))
-const hasTrackChanges = computed(() => {
-  const savedIds = (selectedPlaylist.value?.tracks ?? []).map((track) => track.id).join(',')
-  return orderedTracks.value.map((track) => track.id).join(',') !== savedIds
-})
 
 function sortPlaylists() {
   playlists.value.sort((a, b) => a.sort - b.sort || a.id - b.id)
-}
-
-function syncOrderedTracks() {
-  orderedTracks.value = [...(selectedPlaylist.value?.tracks ?? [])]
 }
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [playlistData, trackData, settingsData] = await Promise.all([adminApi.playlists(), adminApi.tracks(), publicApi.settings()])
+    const [playlistData, settingsData] = await Promise.all([adminApi.playlists(), publicApi.settings()])
     playlists.value = playlistData.map((item) => ({ ...item, tracks: item.tracks ?? [] }))
-    tracks.value = trackData.sort((a, b) => a.sort - b.sort || a.id - b.id)
     settings.value = settingsData
     sortPlaylists()
     selectedPlaylistId.value = playlists.value[0]?.id ?? null
-    syncOrderedTracks()
   } catch (reason) {
     error.value = errorMessage(reason)
   } finally {
@@ -81,7 +68,6 @@ async function savePlaybackSettings() {
 
 function selectPlaylist(id: number) {
   selectedPlaylistId.value = id
-  syncOrderedTracks()
   error.value = ''
   success.value = ''
 }
@@ -117,7 +103,6 @@ async function save() {
       const created = await adminApi.createPlaylist(payload)
       playlists.value.push({ ...created, tracks: created.tracks ?? [] })
       selectedPlaylistId.value = created.id
-      orderedTracks.value = []
     } else {
       const updated = await adminApi.updatePlaylist({ ...payload, id })
       playlists.value = playlists.value.map((item) => item.id === id ? { ...updated, tracks: updated.tracks ?? item.tracks } : item)
@@ -140,10 +125,7 @@ async function remove(item: Playlist) {
   try {
     await adminApi.deletePlaylist(item.id)
     playlists.value = playlists.value.filter((entry) => entry.id !== item.id)
-    if (selectedPlaylistId.value === item.id) {
-      selectedPlaylistId.value = playlists.value[0]?.id ?? null
-      syncOrderedTracks()
-    }
+    if (selectedPlaylistId.value === item.id) selectedPlaylistId.value = playlists.value[0]?.id ?? null
     if (editingId.value === item.id) formOpen.value = false
     success.value = '播放列表已删除'
   } catch (reason) {
@@ -153,39 +135,23 @@ async function remove(item: Playlist) {
   }
 }
 
-function toggleTrack(track: Track, event: Event) {
-  const checked = (event.target as HTMLInputElement).checked
-  if (checked && !selectedTrackIds.value.has(track.id)) orderedTracks.value.push(track)
-  if (!checked) orderedTracks.value = orderedTracks.value.filter((item) => item.id !== track.id)
-  success.value = ''
-}
-
-function moveTrack(index: number, offset: number) {
-  const target = index + offset
-  if (target < 0 || target >= orderedTracks.value.length) return
-  const next = [...orderedTracks.value]
-  const [track] = next.splice(index, 1)
-  next.splice(target, 0, track)
-  orderedTracks.value = next
-  success.value = ''
-}
-
-async function saveTracks() {
+async function removeTrackFromPlaylist(track: Track) {
   const playlist = selectedPlaylist.value
-  if (!playlist) return
-  savingTracks.value = true
+  if (!playlist || deletingTrackId.value !== null || !playlist.tracks.some((item) => item.id === track.id)) return
+  if (!window.confirm(`确定从播放列表“${playlist.name}”移除“${track.title}”吗？此操作只解除当前列表关联，不删除曲目、本地文件或 OSS 对象。`)) return
+  deletingTrackId.value = track.id
   error.value = ''
   success.value = ''
   try {
-    const updated = await adminApi.setPlaylistTracks(playlist.id, orderedTracks.value.map((track) => track.id))
+    const trackIDs = playlist.tracks.filter((item) => item.id !== track.id).map((item) => item.id)
+    const updated = await adminApi.setPlaylistTracks(playlist.id, trackIDs)
     const nextTracks = updated.tracks ?? []
     playlists.value = playlists.value.map((item) => item.id === playlist.id ? { ...updated, tracks: nextTracks } : item)
-    orderedTracks.value = [...nextTracks]
-    success.value = '曲目与顺序已保存'
+    success.value = '已从当前播放列表移除'
   } catch (reason) {
     error.value = errorMessage(reason)
   } finally {
-    savingTracks.value = false
+    deletingTrackId.value = null
   }
 }
 </script>
@@ -193,7 +159,7 @@ async function saveTracks() {
 <template>
   <div>
     <div class="mb-5 flex items-center justify-between gap-3">
-      <p class="text-xs text-white/35">创建播放列表，勾选曲目并调整播放顺序。</p>
+      <p class="text-xs text-white/35">管理播放列表及当前歌曲；添加歌曲请前往各音乐来源页。</p>
       <button class="primary-button shrink-0" type="button" @click="create"><Plus :size="15" />新增列表</button>
     </div>
     <AlertMessage :message="error" type="error" />
@@ -244,7 +210,7 @@ async function saveTracks() {
             class="flex items-center gap-2 rounded-xl border p-2.5 transition-colors"
             :class="selectedPlaylistId === item.id ? 'border-violet-300/20 bg-violet-300/[0.07]' : 'border-white/[0.065] bg-white/[0.025]'"
           >
-            <button class="flex min-w-0 flex-1 items-center gap-3 text-left" type="button" :disabled="savingTracks" @click="selectPlaylist(item.id)">
+            <button class="flex min-w-0 flex-1 items-center gap-3 text-left" type="button" :disabled="deletingTrackId !== null" @click="selectPlaylist(item.id)">
               <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.05] text-violet-200/60"><ListMusic :size="16" /></span>
               <span class="min-w-0 flex-1">
                 <span class="flex items-center gap-2"><span class="truncate text-sm text-white/75">{{ item.name }}</span><span v-if="!item.enabled" class="shrink-0 text-[9px] text-white/30">已停用</span></span>
@@ -261,30 +227,27 @@ async function saveTracks() {
       </section>
 
       <section v-if="selectedPlaylist" class="rounded-2xl border border-white/[0.065] bg-black/10 p-4">
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div><h3 class="text-sm font-medium text-white/80">{{ selectedPlaylist.name }}</h3><p class="mt-1 text-[10px] text-white/30">已选 {{ orderedTracks.length }} 首，使用箭头调整顺序</p></div>
-          <button class="primary-button" type="button" :disabled="savingTracks || !hasTrackChanges" @click="saveTracks"><Save :size="14" />{{ savingTracks ? '保存中…' : '保存曲目顺序' }}</button>
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-white/80">{{ selectedPlaylist.name }} · 列表歌曲</h3>
+          <p class="mt-1 text-[10px] text-white/30">共 {{ selectedPlaylist.tracks.length }} 首；删除只会解除当前列表关联</p>
         </div>
-
-        <div v-if="orderedTracks.length" class="mb-5 space-y-1.5">
-          <article v-for="(track, index) in orderedTracks" :key="track.id" class="flex items-center gap-2 rounded-lg bg-white/[0.025] px-2.5 py-2">
-            <span class="w-5 shrink-0 text-center font-mono text-[10px] text-white/25">{{ index + 1 }}</span>
-            <div class="min-w-0 flex-1"><p class="truncate text-xs text-white/70">{{ track.title }}</p><p class="mt-0.5 truncate text-[10px] text-white/30">{{ track.artist || '未知艺术家' }}<span v-if="!track.enabled"> · 已停用</span></p></div>
-            <button class="icon-button size-7" type="button" title="上移" aria-label="上移曲目" :disabled="index === 0 || savingTracks" @click="moveTrack(index, -1)"><ArrowUp :size="13" /></button>
-            <button class="icon-button size-7" type="button" title="下移" aria-label="下移曲目" :disabled="index === orderedTracks.length - 1 || savingTracks" @click="moveTrack(index, 1)"><ArrowDown :size="13" /></button>
-          </article>
-        </div>
-        <p v-else class="mb-5 rounded-lg border border-dashed border-white/10 py-6 text-center text-xs text-white/30">从下方勾选曲目加入此列表。</p>
-
-        <h4 class="mb-2 text-xs font-medium text-white/55">加入或移出曲目</h4>
-        <div v-if="tracks.length" class="max-h-72 space-y-1 overflow-y-auto pr-1">
-          <label v-for="track in tracks" :key="track.id" class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 text-xs transition-colors hover:bg-white/[0.035]">
-            <input class="size-3.5 shrink-0 accent-violet-500" type="checkbox" :checked="selectedTrackIds.has(track.id)" :disabled="savingTracks" @change="toggleTrack(track, $event)" />
-            <span class="min-w-0 flex-1 truncate text-white/60">{{ track.title }}<span class="text-white/25"> · {{ track.artist || '未知艺术家' }}</span></span>
+        <div v-if="selectedPlaylist.tracks.length" class="max-h-[32rem] space-y-1 overflow-y-auto pr-1">
+          <div v-for="track in selectedPlaylist.tracks" :key="track.id" class="flex items-center gap-2 rounded-lg px-2 py-2 text-xs transition-colors hover:bg-white/[0.035]">
+            <span class="min-w-0 flex-1 truncate text-white/60">{{ track.title }}<span class="text-white/25"> · {{ track.artist || '未知艺术家' }}</span><span v-if="!track.enabled" class="text-white/30"> · 已停用</span></span>
             <span class="shrink-0 text-[9px] uppercase text-white/25">{{ track.source }}</span>
-          </label>
+            <button
+              class="icon-button size-8 shrink-0 hover:bg-rose-400/10 hover:text-rose-200"
+              type="button"
+              :title="`从当前列表移除 ${track.title}`"
+              :aria-label="`从当前列表移除 ${track.title}`"
+              :disabled="deletingTrackId !== null"
+              @click="removeTrackFromPlaylist(track)"
+            >
+              <LoadingSpinner v-if="deletingTrackId === track.id" label="" /><Trash2 v-else :size="14" />
+            </button>
+          </div>
         </div>
-        <p v-else class="py-5 text-center text-xs text-white/30">暂无可选曲目，请先添加音乐。</p>
+        <p v-else class="rounded-lg border border-dashed border-white/10 py-10 text-center text-xs text-white/30">当前列表暂无歌曲，请从本地音乐、网易云音乐或对象存储页添加。</p>
       </section>
       <section v-else class="rounded-2xl border border-dashed border-white/10 py-16 text-center text-sm text-white/30">选择或新建一个播放列表以管理曲目。</section>
     </div>

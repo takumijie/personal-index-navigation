@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -101,6 +102,38 @@ func (s *UploadService) Save(kind string, header *multipart.FileHeader) (string,
 		return "", invalid("上传文件超过大小限制")
 	}
 	return "/storage/" + kind + "/" + name, nil
+}
+
+func (s *UploadService) DeleteMusic(rawURL string) error {
+	const prefix = "/storage/music/"
+	if !strings.HasPrefix(rawURL, prefix) {
+		return invalid("本地音频路径无效")
+	}
+	name := strings.TrimPrefix(rawURL, prefix)
+	ext := filepath.Ext(name)
+	encoded := strings.TrimSuffix(name, ext)
+	if len(encoded) != 32 || len(name) != 32+len(ext) || ext != strings.ToLower(ext) ||
+		encoded != strings.ToLower(encoded) || !allowedExtension("music", ext) {
+		return invalid("本地音频路径无效")
+	}
+	if _, err := hex.DecodeString(encoded); err != nil {
+		return invalid("本地音频路径无效")
+	}
+	filename := filepath.Join(s.root, "music", name)
+	info, err := os.Lstat(filename)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return invalid("本地音频不是普通文件")
+	}
+	if err := os.Remove(filename); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func allowedExtension(kind, ext string) bool {

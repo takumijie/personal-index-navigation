@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"homepage/internal/model"
@@ -73,6 +77,65 @@ func TestMusicServiceCoverFallbacksAndPathConstraint(t *testing.T) {
 	cover, err := music.Cover(context.Background(), remote.ID)
 	if err != nil || cover.URL != remote.Cover {
 		t.Fatalf("远程封面应返回重定向地址: %+v, %v", cover, err)
+	}
+}
+
+func TestMusicServiceNeteaseCoverBackfillAndMissingCache(t *testing.T) {
+	var foundCalls atomic.Int32
+	var missingCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/song/detail" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("ids") == "347230" {
+			foundCalls.Add(1)
+			fmt.Fprint(w, `{"code":200,"songs":[{"id":347230,"name":"晴天","al":{"name":"叶惠美","picUrl":"https://example.com/fetched-cover.jpg"}}]}`)
+			return
+		}
+		missingCalls.Add(1)
+		fmt.Fprint(w, `{"code":200,"songs":[{"id":347231,"name":"无封面","al":{"name":"测试"}}]}`)
+	}))
+	defer server.Close()
+
+	repo := providerTestRepository(t)
+	provider := NewNeteaseService(repo, server.Client())
+	if err := provider.SaveConfig(NeteaseConfig{BaseURL: server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	music := NewMusicService(repo, t.TempDir())
+	music.RegisterProvider(neteaseProvider, provider)
+	track := model.MusicTrack{Title: "晴天", Source: neteaseProvider, ExternalID: "347230", Enabled: true}
+	if err := repo.SaveTrack(&track); err != nil {
+		t.Fatal(err)
+	}
+	cover, err := music.Cover(context.Background(), track.ID)
+	if err != nil || cover.URL != "https://example.com/fetched-cover.jpg" {
+		t.Fatalf("网易云空封面应按需补全: %+v, %v", cover, err)
+	}
+	stored, err := repo.TrackByID(track.ID)
+	if err != nil || stored.Cover != cover.URL {
+		t.Fatalf("补全封面未持久化: %+v, %v", stored, err)
+	}
+	if _, err := music.Cover(context.Background(), track.ID); err != nil {
+		t.Fatal(err)
+	}
+	if foundCalls.Load() != 1 {
+		t.Fatalf("已有封面不应重复请求上游，请求 %d 次", foundCalls.Load())
+	}
+
+	missing := model.MusicTrack{Title: "无封面", Source: neteaseProvider, ExternalID: "347231", Enabled: true}
+	if err := repo.SaveTrack(&missing); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := music.Cover(context.Background(), missing.ID); err == nil {
+			t.Fatal("上游无封面时应返回错误")
+		}
+	}
+	if missingCalls.Load() != 1 {
+		t.Fatalf("无封面负缓存未生效，请求 %d 次", missingCalls.Load())
 	}
 }
 

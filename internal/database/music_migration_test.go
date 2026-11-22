@@ -25,6 +25,18 @@ func TestMusicSourceMigrationPreservesTracks(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec(`CREATE TABLE playlists (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0,
+		enabled BOOLEAN NOT NULL DEFAULT TRUE, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE playlist_tracks (
+		playlist_id INTEGER NOT NULL, track_id INTEGER NOT NULL, sort INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL, PRIMARY KEY(playlist_id, track_id)
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -43,5 +55,62 @@ func TestMusicSourceMigrationPreservesTracks(t *testing.T) {
 	}
 	if track.Title != "Legacy" || track.Source != "remote" || track.Sort != 3 || !track.Enabled || track.ExternalID != "" || track.LyricPath != "" {
 		t.Fatalf("旧曲目迁移结果错误: %+v", track)
+	}
+}
+
+func TestPlaylistNameMigrationDeduplicatesAndConstrainsNames(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "playlists.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.Exec(`CREATE TABLE playlists (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0,
+		enabled BOOLEAN NOT NULL DEFAULT TRUE, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE playlist_tracks (
+		playlist_id INTEGER NOT NULL, track_id INTEGER NOT NULL, sort INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL, PRIMARY KEY(playlist_id, track_id)
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("INSERT INTO schema_migrations(version) VALUES (1), (2)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO playlists(id, name, created_at, updated_at) VALUES
+		(1, ' Daily ', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+		(2, 'daily', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+		(3, 'DAILY', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+		(4, 'Other', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO playlist_tracks(playlist_id, track_id, created_at) VALUES (1, 1, CURRENT_TIMESTAMP), (2, 2, CURRENT_TIMESTAMP), (3, 3, CURRENT_TIMESTAMP), (4, 4, CURRENT_TIMESTAMP)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	var playlists []model.Playlist
+	if err := db.Order("id").Find(&playlists).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(playlists) != 2 || playlists[0].ID != 1 || playlists[0].Name != "Daily" || playlists[1].ID != 4 {
+		t.Fatalf("重复列表清理结果错误: %+v", playlists)
+	}
+	var relationCount int64
+	if err := db.Table("playlist_tracks").Count(&relationCount).Error; err != nil || relationCount != 2 {
+		t.Fatalf("重复列表关联应一并清理: count=%d, %v", relationCount, err)
+	}
+	if err := db.Exec("INSERT INTO playlists(name, created_at, updated_at) VALUES (' daily ', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").Error; err == nil {
+		t.Fatal("唯一索引不应允许空白和大小写变体重名")
 	}
 }

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronLeft, ChevronRight, Download, ListPlus, LogIn, LogOut, Music2, QrCode, RefreshCw, Search, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, Download, ListPlus, LogIn, LogOut, Music2, QrCode, RefreshCw, Save, Search, X } from 'lucide-vue-next'
 import { adminApi } from '@/api'
 import { errorMessage } from '@/api/client'
-import type { ImportResult, NeteaseQrSession, NeteaseQrState, NeteaseSearchResult, NeteaseStatus, Track } from '@/types'
+import type { ImportResult, NeteaseConfig, NeteaseQrSession, NeteaseQrState, NeteaseSearchResult, NeteaseStatus, Playlist, Track } from '@/types'
 import AlertMessage from '@/components/common/AlertMessage.vue'
 import FormField from '@/components/common/FormField.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -17,6 +17,10 @@ const qrMessage = ref('')
 const qrCreating = ref(false)
 const error = ref('')
 const success = ref('')
+const config = ref<NeteaseConfig>({ base_url: '' })
+const savedBaseURL = ref('')
+const configLoading = ref(true)
+const configSaving = ref(false)
 
 const keywords = ref('')
 const searchResult = ref<NeteaseSearchResult | null>(null)
@@ -24,6 +28,9 @@ const searching = ref(false)
 const selectedTracks = ref<Track[]>([])
 const createName = ref('')
 const creating = ref(false)
+const playlists = ref<Playlist[]>([])
+const selectedPlaylistID = ref<number | null>(null)
+const appending = ref(false)
 const importInput = ref('')
 const importName = ref('')
 const importing = ref(false)
@@ -32,6 +39,7 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null
 let qrVersion = 0
 let disposed = false
 
+const configured = computed(() => savedBaseURL.value !== '')
 const totalPages = computed(() => {
   if (!searchResult.value) return 1
   return Math.max(1, Math.ceil(searchResult.value.total / searchResult.value.page_size))
@@ -81,6 +89,59 @@ function closeQr() {
   qrSession.value = null
   qrState.value = 'waiting'
   qrMessage.value = ''
+}
+
+async function loadConfig() {
+  configLoading.value = true
+  error.value = ''
+  try {
+    const result = await adminApi.neteaseConfig()
+    config.value = result
+    savedBaseURL.value = result.base_url
+  } catch (reason) {
+    error.value = errorMessage(reason)
+  } finally {
+    configLoading.value = false
+  }
+}
+
+async function saveConfig() {
+  error.value = ''
+  success.value = ''
+  if (!config.value.base_url.trim()) {
+    error.value = '请输入网易云 API 地址'
+    return
+  }
+  configSaving.value = true
+  try {
+    const previousBaseURL = savedBaseURL.value
+    const result = await adminApi.saveNeteaseConfig({ base_url: config.value.base_url.trim() })
+    config.value = result
+    savedBaseURL.value = result.base_url
+    if (previousBaseURL !== result.base_url) {
+      closeQr()
+      status.value = { authenticated: false }
+      searchResult.value = null
+      selectedTracks.value = []
+    }
+    success.value = '网易云 API 地址已保存'
+    await Promise.all([refreshStatus(true), loadPlaylists()])
+  } catch (reason) {
+    error.value = errorMessage(reason)
+  } finally {
+    configSaving.value = false
+  }
+}
+
+async function loadPlaylists() {
+  try {
+    playlists.value = await adminApi.playlists()
+    if (!playlists.value.some((item) => item.id === selectedPlaylistID.value)) {
+      selectedPlaylistID.value = playlists.value[0]?.id || null
+    }
+  } catch (reason) {
+    error.value = errorMessage(reason)
+  }
 }
 
 async function refreshStatus(initial = false) {
@@ -181,6 +242,30 @@ function importSummary(result: ImportResult) {
   return `播放列表“${result.playlist.name}”已保存：导入 ${result.imported} 首，重复 ${result.duplicates} 首`
 }
 
+async function appendPlaylist() {
+  error.value = ''
+  success.value = ''
+  if (!selectedPlaylistID.value) {
+    error.value = '请选择要追加到的已有列表'
+    return
+  }
+  if (!selectedTracks.value.length) {
+    error.value = '请至少选择一首歌曲'
+    return
+  }
+  appending.value = true
+  try {
+    const result = await adminApi.neteaseAppendPlaylist(selectedPlaylistID.value, selectedTracks.value)
+    success.value = `播放列表“${result.playlist.name}”已更新：新增 ${result.imported} 首，重复 ${result.duplicates} 首`
+    selectedTracks.value = []
+    await loadPlaylists()
+  } catch (reason) {
+    error.value = errorMessage(reason)
+  } finally {
+    appending.value = false
+  }
+}
+
 async function createPlaylist() {
   error.value = ''
   success.value = ''
@@ -198,6 +283,8 @@ async function createPlaylist() {
     success.value = importSummary(result)
     selectedTracks.value = []
     createName.value = ''
+    selectedPlaylistID.value = result.playlist.id
+    await loadPlaylists()
   } catch (reason) {
     error.value = errorMessage(reason)
   } finally {
@@ -225,7 +312,15 @@ async function importPlaylist() {
   }
 }
 
-onMounted(() => refreshStatus(true))
+onMounted(async () => {
+  await loadConfig()
+  if (configured.value) {
+    await refreshStatus(true)
+  } else {
+    statusLoading.value = false
+  }
+  await loadPlaylists()
+})
 onBeforeUnmount(() => {
   disposed = true
   stopPolling()
@@ -238,6 +333,19 @@ onBeforeUnmount(() => {
     <AlertMessage :message="success" type="success" />
 
     <section class="rounded-2xl border border-white/[0.065] bg-white/[0.025] p-4 min-[640px]:p-5">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-sm font-medium text-white/80">网易云 API 配置</h3>
+        <a href="https://github.com/neteasecloudmusicapienhanced/api-enhanced" target="_blank" rel="noopener noreferrer" class="text-xs text-violet-300 transition-colors hover:text-violet-200">API 开源项目</a>
+      </div>
+      <form class="flex flex-col gap-2 min-[560px]:flex-row" @submit.prevent="saveConfig">
+        <input v-model="config.base_url" class="field" type="url" placeholder="https://your-netease-api.example.com" :disabled="configLoading" />
+        <button class="primary-button shrink-0" type="submit" :disabled="configSaving || configLoading"><Save :size="14" />{{ configSaving ? '保存中…' : '保存地址' }}</button>
+      </form>
+      <p class="mt-3 text-xs leading-5 text-white/35">请填写自行部署的 NeteaseCloudMusicApiEnhanced 服务地址，项目不内置公共或私人 API。</p>
+      <p v-if="!configured && !configLoading" class="mt-2 text-xs text-amber-200/70">保存 API 地址后才能使用网易云登录、搜索和导入功能。</p>
+    </section>
+
+    <section v-if="configured" class="rounded-2xl border border-white/[0.065] bg-white/[0.025] p-4 min-[640px]:p-5">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="flex items-center gap-3">
           <img v-if="status.authenticated && status.avatar" :src="status.avatar" alt="" class="size-11 rounded-full object-cover" />
@@ -269,7 +377,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <template v-if="status.authenticated">
+    <template v-if="configured && status.authenticated">
       <section class="rounded-2xl border border-white/[0.065] bg-white/[0.025] p-4 min-[640px]:p-5">
         <h3 class="mb-4 flex items-center gap-2 text-sm font-medium text-white/80"><Search :size="16" />搜索歌曲</h3>
         <form class="flex flex-col gap-2 min-[560px]:flex-row" @submit.prevent="search(1)">
@@ -304,10 +412,19 @@ onBeforeUnmount(() => {
             <button class="icon-button" type="button" aria-label="下一页" :disabled="searching || currentPage >= totalPages" @click="search(currentPage + 1)"><ChevronRight :size="16" /></button>
           </div>
 
-          <form class="mt-5 flex flex-col gap-2 border-t border-white/[0.06] pt-4 min-[560px]:flex-row" @submit.prevent="createPlaylist">
-            <input v-model="createName" class="field" placeholder="新播放列表名称" maxlength="80" />
-            <button class="primary-button shrink-0" type="submit" :disabled="creating || !selectedTracks.length"><ListPlus :size="14" />{{ creating ? '创建中…' : `创建列表（${selectedTracks.length}）` }}</button>
-          </form>
+          <div class="mt-5 space-y-3 border-t border-white/[0.06] pt-4">
+            <form class="flex flex-col gap-2 min-[560px]:flex-row" @submit.prevent="appendPlaylist">
+              <select v-model.number="selectedPlaylistID" class="field" :disabled="!playlists.length">
+                <option :value="null" disabled>{{ playlists.length ? '选择已有列表' : '暂无已有列表' }}</option>
+                <option v-for="playlist in playlists" :key="playlist.id" :value="playlist.id">{{ playlist.name }}（{{ playlist.tracks.length }} 首）</option>
+              </select>
+              <button class="secondary-button shrink-0" type="submit" :disabled="appending || !selectedPlaylistID || !selectedTracks.length"><ListPlus :size="14" />{{ appending ? '追加中…' : `追加到已有列表（${selectedTracks.length}）` }}</button>
+            </form>
+            <form class="flex flex-col gap-2 min-[560px]:flex-row" @submit.prevent="createPlaylist">
+              <input v-model="createName" class="field" placeholder="新播放列表名称" maxlength="80" />
+              <button class="primary-button shrink-0" type="submit" :disabled="creating || !selectedTracks.length"><ListPlus :size="14" />{{ creating ? '创建中…' : `创建列表（${selectedTracks.length}）` }}</button>
+            </form>
+          </div>
         </div>
       </section>
 
@@ -321,6 +438,6 @@ onBeforeUnmount(() => {
       </section>
     </template>
 
-    <button class="secondary-button" type="button" :disabled="statusLoading" @click="refreshStatus(true)"><RefreshCw :size="14" />刷新登录状态</button>
+    <button v-if="configured" class="secondary-button" type="button" :disabled="statusLoading" @click="refreshStatus(true)"><RefreshCw :size="14" />刷新登录状态</button>
   </div>
 </template>

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"net/url"
 	"path"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"homepage/internal/model"
+	"homepage/internal/repository"
 )
 
 func plainText(value string, multiline bool) bool {
@@ -126,11 +128,19 @@ func validateTrack(item model.MusicTrack) error {
 	return nil
 }
 
-func validatePlaylist(item model.Playlist) error {
+func validatePlaylist(item *model.Playlist) error {
+	item.Name = strings.TrimSpace(item.Name)
 	if !required(item.Name, 100) || item.Sort < 0 || item.Sort > 1000000 {
 		return invalid("播放列表名称或排序无效")
 	}
 	return nil
+}
+
+func playlistStoreError(err error) error {
+	if errors.Is(err, repository.ErrPlaylistNameExists) {
+		return invalid("播放列表名称已存在")
+	}
+	return err
 }
 
 func validateProfile(profile model.SiteProfile) error {

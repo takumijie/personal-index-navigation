@@ -54,10 +54,11 @@ func newTestApp(t *testing.T) testApp {
 func openTestRouter(t *testing.T, cfg config.Config, db *gorm.DB) testApp {
 	t.Helper()
 	repo := repository.New(db)
+	uploads := service.NewUploadService(cfg.Storage.Path, cfg.Upload.MaxImageBytes, cfg.Upload.MaxMusicBytes)
 	api := NewAPI(
-		service.NewContentService(repo),
+		service.NewContentService(repo, uploads),
 		service.NewAuthService(repo),
-		service.NewUploadService(cfg.Storage.Path, cfg.Upload.MaxImageBytes, cfg.Upload.MaxMusicBytes),
+		uploads,
 		service.NewMusicService(repo, cfg.Storage.Path),
 	)
 	router, err := NewRouter(cfg, api)

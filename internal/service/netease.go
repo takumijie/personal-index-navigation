@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,15 +16,16 @@ import (
 
 	"homepage/internal/model"
 	"homepage/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 const (
-	neteaseProvider       = "netease"
-	neteaseDefaultBaseURL = "https://music-api.ilibilib.top"
-	neteaseHTTPTimeout    = 15 * time.Second
-	neteaseMaxResponse    = 8 << 20
-	neteaseQRTTL          = 2 * time.Minute
-	neteaseLyricsTTL      = 5 * time.Minute
+	neteaseProvider    = "netease"
+	neteaseHTTPTimeout = 15 * time.Second
+	neteaseMaxResponse = 8 << 20
+	neteaseQRTTL       = 2 * time.Minute
+	neteaseLyricsTTL   = 5 * time.Minute
 )
 
 type NeteaseQRCreateResult struct {
@@ -55,8 +57,13 @@ type NeteaseSearchResult struct {
 	Total    int                `json:"total"`
 }
 
+type NeteaseConfig struct {
+	BaseURL string `json:"base_url"`
+}
+
 type neteaseProviderConfig struct {
-	Cookie string `json:"cookie"`
+	BaseURL string `json:"base_url"`
+	Cookie  string `json:"cookie"`
 }
 
 type neteaseQRSession struct {
@@ -72,24 +79,13 @@ type neteaseLyricsEntry struct {
 type NeteaseService struct {
 	repo     *repository.Repository
 	client   *http.Client
-	baseURL  *url.URL
 	mu       sync.Mutex
 	sessions map[string]neteaseQRSession
-	cookie   string
-	loaded   bool
 	lyricsMu sync.Mutex
 	lyrics   map[string]neteaseLyricsEntry
 }
 
-func NewNeteaseService(repo *repository.Repository, client *http.Client, baseURL string) (*NeteaseService, error) {
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		baseURL = neteaseDefaultBaseURL
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
-		return nil, invalid("网易云 API 地址无效")
-	}
+func NewNeteaseService(repo *repository.Repository, client *http.Client) *NeteaseService {
 	if client == nil {
 		client = &http.Client{Timeout: neteaseHTTPTimeout}
 	} else {
@@ -100,9 +96,40 @@ func NewNeteaseService(repo *repository.Repository, client *http.Client, baseURL
 		client = &clone
 	}
 	return &NeteaseService{
-		repo: repo, client: client, baseURL: parsed,
+		repo: repo, client: client,
 		sessions: make(map[string]neteaseQRSession), lyrics: make(map[string]neteaseLyricsEntry),
-	}, nil
+	}
+}
+
+func (s *NeteaseService) ReadConfig() (NeteaseConfig, error) {
+	config, err := s.loadProviderConfig()
+	if err != nil {
+		return NeteaseConfig{}, err
+	}
+	return NeteaseConfig{BaseURL: config.BaseURL}, nil
+}
+
+func (s *NeteaseService) SaveConfig(input NeteaseConfig) error {
+	parsed, err := parseNeteaseBaseURL(input.BaseURL)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.providerConfig()
+	if err != nil {
+		return err
+	}
+	baseURL := parsed.String()
+	if current.BaseURL != baseURL {
+		current.Cookie = ""
+		s.sessions = make(map[string]neteaseQRSession)
+		s.lyricsMu.Lock()
+		s.lyrics = make(map[string]neteaseLyricsEntry)
+		s.lyricsMu.Unlock()
+	}
+	current.BaseURL = baseURL
+	return s.repo.SaveProviderConfig(neteaseProvider, current)
 }
 
 func (s *NeteaseService) QRCreate(ctx context.Context, _ ...string) (NeteaseQRCreateResult, error) {
@@ -285,12 +312,33 @@ func (s *NeteaseService) Search(ctx context.Context, keywords string, page, page
 }
 
 func (s *NeteaseService) CreateFromTracks(name string, sort int, tracks []model.MusicTrack) (model.Playlist, int, error) {
-	if len(tracks) == 0 || len(tracks) > 1000 {
-		return model.Playlist{}, 0, invalid("请选择 1 至 1000 首网易云歌曲")
-	}
 	playlist := model.Playlist{Name: name, Sort: sort, Enabled: true}
-	if err := validatePlaylist(playlist); err != nil {
+	if err := validatePlaylist(&playlist); err != nil {
 		return model.Playlist{}, 0, err
+	}
+	items, err := normalizeNeteaseTracks(tracks)
+	if err != nil {
+		return model.Playlist{}, 0, err
+	}
+	playlist, duplicates, err := s.repo.ImportPlaylist(playlist, items)
+	return playlist, duplicates, playlistStoreError(err)
+}
+
+func (s *NeteaseService) AppendToPlaylist(playlistID uint, tracks []model.MusicTrack) (model.Playlist, int, int, error) {
+	items, err := normalizeNeteaseTracks(tracks)
+	if err != nil {
+		return model.Playlist{}, 0, 0, err
+	}
+	playlist, imported, duplicates, err := s.repo.AppendPlaylistTracks(playlistID, items)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Playlist{}, 0, 0, notFound("播放列表不存在")
+	}
+	return playlist, imported, duplicates, err
+}
+
+func normalizeNeteaseTracks(tracks []model.MusicTrack) ([]model.MusicTrack, error) {
+	if len(tracks) == 0 || len(tracks) > 1000 {
+		return nil, invalid("请选择 1 至 1000 首网易云歌曲")
 	}
 	items := append([]model.MusicTrack(nil), tracks...)
 	for i := range items {
@@ -298,18 +346,18 @@ func (s *NeteaseService) CreateFromTracks(name string, sort int, tracks []model.
 		items[i].PlaylistIDs = nil
 		items[i].Sort = i
 		if items[i].Source != neteaseProvider {
-			return model.Playlist{}, 0, invalid("只能导入网易云歌曲")
+			return nil, invalid("只能导入网易云歌曲")
 		}
 		externalID, ok := parsePositiveNeteaseID(items[i].ExternalID)
 		if !ok {
-			return model.Playlist{}, 0, invalid("网易云歌曲 ID 无效")
+			return nil, invalid("网易云歌曲 ID 无效")
 		}
 		items[i].ExternalID = externalID
 		if err := validateTrack(items[i]); err != nil {
-			return model.Playlist{}, 0, err
+			return nil, err
 		}
 	}
-	return s.repo.ImportPlaylist(playlist, items)
+	return items, nil
 }
 
 func (s *NeteaseService) ImportPlaylist(ctx context.Context, input, name string) (model.Playlist, int, error) {
@@ -374,6 +422,31 @@ func (s *NeteaseService) ImportPlaylist(ctx context.Context, input, name string)
 		return model.Playlist{}, 0, failure(http.StatusBadGateway, "upstream_error", "网易云歌单曲目响应不完整")
 	}
 	return s.CreateFromTracks(name, 0, tracks)
+}
+
+func (s *NeteaseService) TrackCover(ctx context.Context, track model.MusicTrack) (string, error) {
+	id, ok := parsePositiveNeteaseID(track.ExternalID)
+	if !ok || track.Source != neteaseProvider {
+		return "", invalid("网易云歌曲 ID 无效")
+	}
+	var response struct {
+		Code  int           `json:"code"`
+		Songs []neteaseSong `json:"songs"`
+	}
+	if err := s.request(ctx, http.MethodGet, "/song/detail", url.Values{"ids": {id}}, &response); err != nil {
+		return "", err
+	}
+	if response.Code != http.StatusOK {
+		return "", neteaseUpstreamError()
+	}
+	if len(response.Songs) == 0 {
+		return "", notFound("封面不存在")
+	}
+	cover := neteaseTrack(response.Songs[0], 0).Cover
+	if !httpURL(cover) {
+		return "", notFound("封面不存在")
+	}
+	return cover, nil
 }
 
 func (s *NeteaseService) Playback(ctx context.Context, track model.MusicTrack) (Playback, error) {
@@ -542,11 +615,15 @@ func parsePositiveNeteaseID(value string) (string, bool) {
 }
 
 func (s *NeteaseService) request(ctx context.Context, method, endpoint string, query url.Values, target any) error {
-	cookie, err := s.getCookie()
+	config, err := s.loadProviderConfig()
 	if err != nil {
 		return err
 	}
-	requestURL := *s.baseURL
+	baseURL, err := parseNeteaseBaseURL(config.BaseURL)
+	if err != nil {
+		return failure(http.StatusServiceUnavailable, "provider_not_configured", "请先在后台配置网易云 API 地址")
+	}
+	requestURL := *baseURL
 	requestURL.Path = strings.TrimRight(requestURL.Path, "/") + endpoint
 	requestURL.RawPath = ""
 	requestURL.RawQuery = query.Encode()
@@ -555,8 +632,8 @@ func (s *NeteaseService) request(ctx context.Context, method, endpoint string, q
 	if err != nil {
 		return err
 	}
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
+	if config.Cookie != "" {
+		req.Header.Set("Cookie", config.Cookie)
 	}
 	response, err := s.client.Do(req)
 	if err != nil {
@@ -584,46 +661,49 @@ func (s *NeteaseService) request(ctx context.Context, method, endpoint string, q
 	return nil
 }
 
-func (s *NeteaseService) getCookie() (string, error) {
+func (s *NeteaseService) loadProviderConfig() (neteaseProviderConfig, error) {
 	s.mu.Lock()
-	if s.loaded {
-		cookie := s.cookie
-		s.mu.Unlock()
-		return cookie, nil
-	}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	return s.providerConfig()
+}
+
+func (s *NeteaseService) providerConfig() (neteaseProviderConfig, error) {
 	if s.repo == nil {
-		s.mu.Lock()
-		s.loaded = true
-		s.mu.Unlock()
-		return "", nil
+		return neteaseProviderConfig{}, failure(http.StatusInternalServerError, "provider_unavailable", "网易云配置存储尚未初始化")
 	}
 	var config neteaseProviderConfig
 	if err := s.repo.ProviderConfig(neteaseProvider, &config); err != nil {
-		return "", err
+		return neteaseProviderConfig{}, err
 	}
-	s.mu.Lock()
-	if !s.loaded {
-		s.cookie = config.Cookie
-		s.loaded = true
+	return config, nil
+}
+
+func parseNeteaseBaseURL(value string) (*url.URL, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, invalid("请填写网易云 API 地址")
 	}
-	cookie := s.cookie
-	s.mu.Unlock()
-	return cookie, nil
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return nil, invalid("网易云 API 地址无效")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	return parsed, nil
 }
 
 func (s *NeteaseService) saveCookie(cookie string) error {
-	if s.repo == nil {
-		return failure(http.StatusInternalServerError, "provider_unavailable", "网易云配置存储尚未初始化")
-	}
-	if err := s.repo.SaveProviderConfig(neteaseProvider, neteaseProviderConfig{Cookie: cookie}); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	config, err := s.providerConfig()
+	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	s.cookie = cookie
-	s.loaded = true
-	s.mu.Unlock()
-	return nil
+	if config.BaseURL == "" {
+		return failure(http.StatusServiceUnavailable, "provider_not_configured", "请先在后台配置网易云 API 地址")
+	}
+	config.Cookie = cookie
+	return s.repo.SaveProviderConfig(neteaseProvider, config)
 }
 
 func (s *NeteaseService) deleteQRSession(sessionID string) {

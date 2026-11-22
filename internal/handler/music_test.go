@@ -81,3 +81,24 @@ func TestMusicPlaylistsPostSecurityAndLyrics(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaylistNameUniqueness(t *testing.T) {
+	app := newTestApp(t)
+	cookie := login(t, app.router)
+	first := responseData[model.Playlist](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/playlists/create", model.Playlist{
+		Name: "Daily", Enabled: true,
+	}, cookie, http.StatusOK))
+	performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/playlists/create", model.Playlist{
+		Name: " daily ", Enabled: true,
+	}, cookie, http.StatusBadRequest)
+	second := responseData[model.Playlist](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/playlists/create", model.Playlist{
+		Name: "Other", Enabled: true,
+	}, cookie, http.StatusOK))
+	second.Name = " DAILY "
+	performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/playlists/update", second, cookie, http.StatusBadRequest)
+	second.Name = " Other "
+	updated := responseData[model.Playlist](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/playlists/update", second, cookie, http.StatusOK))
+	if updated.Name != "Other" || first.Name != "Daily" {
+		t.Fatalf("列表名称规范化错误: first=%+v, updated=%+v", first, updated)
+	}
+}

@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"homepage/internal/model"
@@ -13,6 +14,8 @@ import (
 type Repository struct {
 	db *gorm.DB
 }
+
+var ErrPlaylistNameExists = errors.New("playlist name already exists")
 
 func New(db *gorm.DB) *Repository { return &Repository{db: db} }
 
@@ -218,12 +221,51 @@ func (r *Repository) SaveTrack(item *model.MusicTrack) error {
 	})
 }
 
+func (r *Repository) FillTrackCoverIfEmpty(id uint, cover string) error {
+	return fillTrackCoverIfEmpty(r.db, id, cover)
+}
+
+func fillTrackCoverIfEmpty(tx *gorm.DB, id uint, cover string) error {
+	if strings.TrimSpace(cover) == "" {
+		return nil
+	}
+	return tx.Model(&model.MusicTrack{}).
+		Where("id = ? AND TRIM(COALESCE(cover, '')) = ''", id).
+		Update("cover", cover).Error
+}
+
 func (r *Repository) DeleteTrack(id uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("track_id = ?", id).Delete(&model.PlaylistTrack{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&model.MusicTrack{}, id).Error
+	})
+}
+
+func (r *Repository) HasOtherLocalTrackURL(id uint, url string) (bool, error) {
+	var count int64
+	err := r.db.Model(&model.MusicTrack{}).
+		Where("source = ? AND url = ? AND id <> ?", "local", url, id).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *Repository) DeleteS3Tracks(objectKey string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		trackIDs := make([]uint, 0)
+		if err := tx.Model(&model.MusicTrack{}).
+			Where("source = ? AND object_key = ?", "s3", objectKey).
+			Pluck("id", &trackIDs).Error; err != nil {
+			return err
+		}
+		if len(trackIDs) == 0 {
+			return nil
+		}
+		if err := tx.Where("track_id IN ?", trackIDs).Delete(&model.PlaylistTrack{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", trackIDs).Delete(&model.MusicTrack{}).Error
 	})
 }
 
@@ -276,7 +318,30 @@ func (r *Repository) PlaylistByID(id uint, enabledOnly bool) (model.Playlist, er
 	return playlist, err
 }
 
-func (r *Repository) SavePlaylist(item *model.Playlist) error { return r.db.Save(item).Error }
+func (r *Repository) SavePlaylist(item *model.Playlist) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensurePlaylistNameAvailable(tx, item); err != nil {
+			return err
+		}
+		return tx.Save(item).Error
+	})
+}
+
+func ensurePlaylistNameAvailable(tx *gorm.DB, item *model.Playlist) error {
+	item.Name = strings.TrimSpace(item.Name)
+	query := tx.Model(&model.Playlist{}).Where("LOWER(TRIM(name)) = LOWER(?)", item.Name)
+	if item.ID != 0 {
+		query = query.Where("id <> ?", item.ID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrPlaylistNameExists
+	}
+	return nil
+}
 
 func (r *Repository) DeletePlaylist(id uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
@@ -326,6 +391,9 @@ func (r *Repository) SetPlaylistTracks(id uint, trackIDs []uint) error {
 func (r *Repository) ImportPlaylist(playlist model.Playlist, tracks []model.MusicTrack) (model.Playlist, int, error) {
 	duplicates := 0
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensurePlaylistNameAvailable(tx, &playlist); err != nil {
+			return err
+		}
 		if err := tx.Create(&playlist).Error; err != nil {
 			return err
 		}
@@ -349,6 +417,12 @@ func (r *Repository) ImportPlaylist(playlist model.Playlist, tracks []model.Musi
 			} else if err != nil {
 				return err
 			} else {
+				if strings.TrimSpace(track.Cover) == "" && candidate.Cover != "" {
+					if err := fillTrackCoverIfEmpty(tx, track.ID, candidate.Cover); err != nil {
+						return err
+					}
+					track.Cover = candidate.Cover
+				}
 				duplicates++
 			}
 			if _, ok := seen[track.ID]; ok {
@@ -363,6 +437,71 @@ func (r *Repository) ImportPlaylist(playlist model.Playlist, tracks []model.Musi
 		return nil
 	})
 	return playlist, duplicates, err
+}
+
+func (r *Repository) AppendPlaylistTracks(id uint, tracks []model.MusicTrack) (model.Playlist, int, int, error) {
+	var playlist model.Playlist
+	imported, duplicates := 0, 0
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&playlist, id).Error; err != nil {
+			return err
+		}
+		existingIDs := make([]uint, 0)
+		if err := tx.Model(&model.PlaylistTrack{}).Where("playlist_id = ?", id).Pluck("track_id", &existingIDs).Error; err != nil {
+			return err
+		}
+		existing := make(map[uint]struct{}, len(existingIDs))
+		for _, trackID := range existingIDs {
+			existing[trackID] = struct{}{}
+		}
+		nextSort := 0
+		if err := tx.Model(&model.PlaylistTrack{}).Where("playlist_id = ?", id).
+			Select("COALESCE(MAX(sort) + 1, 0)").Scan(&nextSort).Error; err != nil {
+			return err
+		}
+		for _, candidate := range tracks {
+			var track model.MusicTrack
+			query := tx.Where("source = ?", candidate.Source)
+			if candidate.Source == "netease" {
+				query = query.Where("external_id = ?", candidate.ExternalID)
+			} else {
+				query = query.Where("object_key = ?", candidate.ObjectKey)
+			}
+			err := query.First(&track).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				track = candidate
+				track.ID = 0
+				track.PlaylistIDs = nil
+				if err := tx.Create(&track).Error; err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			}
+			if strings.TrimSpace(track.Cover) == "" && candidate.Cover != "" {
+				if err := fillTrackCoverIfEmpty(tx, track.ID, candidate.Cover); err != nil {
+					return err
+				}
+				track.Cover = candidate.Cover
+			}
+			if _, ok := existing[track.ID]; ok {
+				duplicates++
+				continue
+			}
+			if err := tx.Create(&model.PlaylistTrack{PlaylistID: id, TrackID: track.ID, Sort: nextSort}).Error; err != nil {
+				return err
+			}
+			existing[track.ID] = struct{}{}
+			nextSort++
+			imported++
+		}
+		return nil
+	})
+	if err != nil {
+		return model.Playlist{}, 0, 0, err
+	}
+	playlist, err = r.PlaylistByID(id, false)
+	return playlist, imported, duplicates, err
 }
 
 func (r *Repository) ProviderConfig(provider string, target any) error {

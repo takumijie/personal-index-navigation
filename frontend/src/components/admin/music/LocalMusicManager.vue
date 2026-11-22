@@ -168,7 +168,10 @@ async function save() {
 }
 
 async function remove(item: Track) {
-  if (!window.confirm(`确定删除曲目“${item.title}”吗？`)) return
+  const confirmation = item.source === 'local'
+    ? `确定删除本地曲目“${item.title}”吗？将同时删除曲目、全部播放列表关联和本地上传音频，且无法恢复。`
+    : `确定删除历史 Remote 曲目“${item.title}”吗？只删除曲目记录及全部播放列表关联，不删除远程或本地资源。`
+  if (!window.confirm(confirmation)) return
   deletingId.value = item.id
   error.value = ''
   success.value = ''
@@ -176,7 +179,7 @@ async function remove(item: Track) {
     await adminApi.deleteTrack(item.id)
     items.value = items.value.filter((entry) => entry.id !== item.id)
     if (editingId.value === item.id) formOpen.value = false
-    success.value = '曲目已删除'
+    success.value = item.source === 'local' ? '本地曲目及列表关联已删除，上传音频已按需清理' : 'Remote 曲目及列表关联已删除'
   } catch (reason) {
     error.value = errorMessage(reason)
   } finally {

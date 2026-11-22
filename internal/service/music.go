@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"homepage/internal/model"
@@ -36,10 +37,15 @@ type Cover struct {
 const (
 	maxCoverBytes      = 10 << 20
 	maxCoverAudioBytes = 128 << 20
+	missingCoverTTL    = 5 * time.Minute
 )
 
 type coverProvider interface {
 	Cover(context.Context, model.MusicTrack) (io.ReadCloser, error)
+}
+
+type trackCoverProvider interface {
+	TrackCover(context.Context, model.MusicTrack) (string, error)
 }
 
 type MusicProvider interface {
@@ -48,16 +54,18 @@ type MusicProvider interface {
 }
 
 type MusicService struct {
-	repo      *repository.Repository
-	root      string
-	providers map[string]MusicProvider
-	limit     *IPRateLimiter
+	repo         *repository.Repository
+	root         string
+	providers    map[string]MusicProvider
+	limit        *IPRateLimiter
+	coverMu      sync.Mutex
+	missingCover map[uint]time.Time
 }
 
 func NewMusicService(repo *repository.Repository, storageRoot string) *MusicService {
 	return &MusicService{
 		repo: repo, root: storageRoot, providers: make(map[string]MusicProvider),
-		limit: NewIPRateLimiter(120, time.Minute),
+		limit: NewIPRateLimiter(120, time.Minute), missingCover: make(map[uint]time.Time),
 	}
 }
 
@@ -110,15 +118,56 @@ func (s *MusicService) Lyrics(ctx context.Context, id uint) (Lyrics, error) {
 	}
 }
 
+func (s *MusicService) neteaseCover(ctx context.Context, track model.MusicTrack) (Cover, error) {
+	s.coverMu.Lock()
+	expiresAt, missing := s.missingCover[track.ID]
+	if missing && time.Now().Before(expiresAt) {
+		s.coverMu.Unlock()
+		return Cover{}, notFound("封面不存在")
+	}
+	delete(s.missingCover, track.ID)
+	s.coverMu.Unlock()
+
+	provider, ok := s.providers[neteaseProvider].(trackCoverProvider)
+	if !ok {
+		return Cover{}, notFound("封面不存在")
+	}
+	cover, err := provider.TrackCover(ctx, track)
+	if err != nil {
+		var serviceError *Error
+		if errors.As(err, &serviceError) && serviceError.Status == http.StatusNotFound {
+			s.markCoverMissing(track.ID)
+		}
+		return Cover{}, err
+	}
+	if !httpURL(cover) {
+		s.markCoverMissing(track.ID)
+		return Cover{}, notFound("封面不存在")
+	}
+	if err := s.repo.FillTrackCoverIfEmpty(track.ID, cover); err != nil {
+		return Cover{}, err
+	}
+	return Cover{URL: cover}, nil
+}
+
+func (s *MusicService) markCoverMissing(id uint) {
+	s.coverMu.Lock()
+	s.missingCover[id] = time.Now().Add(missingCoverTTL)
+	s.coverMu.Unlock()
+}
+
 func (s *MusicService) Cover(ctx context.Context, id uint) (Cover, error) {
 	track, err := s.publicTrack(id)
 	if err != nil {
 		return Cover{}, err
 	}
-	if oneOf(track.Source, "netease", "remote") {
-		if httpURL(track.Cover) {
-			return Cover{URL: track.Cover}, nil
-		}
+	if httpURL(track.Cover) && oneOf(track.Source, "netease", "remote") {
+		return Cover{URL: track.Cover}, nil
+	}
+	if track.Source == "netease" {
+		return s.neteaseCover(ctx, track)
+	}
+	if track.Source == "remote" {
 		return Cover{}, notFound("封面不存在")
 	}
 

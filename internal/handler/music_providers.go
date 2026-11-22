@@ -9,6 +9,38 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func (a *API) NeteaseReadConfig(c *gin.Context) {
+	if a.neteaseUnavailable(c) {
+		return
+	}
+	result, err := a.netease.ReadConfig()
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	success(c, result)
+}
+
+func (a *API) NeteaseSaveConfig(c *gin.Context) {
+	if a.neteaseUnavailable(c) {
+		return
+	}
+	var input service.NeteaseConfig
+	if !bindJSON(c, &input) {
+		return
+	}
+	if err := a.netease.SaveConfig(input); err != nil {
+		handleError(c, err)
+		return
+	}
+	result, err := a.netease.ReadConfig()
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	success(c, result)
+}
+
 func (a *API) NeteaseQRCreate(c *gin.Context) {
 	if a.neteaseUnavailable(c) {
 		return
@@ -115,6 +147,25 @@ func (a *API) NeteaseCreatePlaylist(c *gin.Context) {
 	success(c, importResult(playlist, duplicates))
 }
 
+func (a *API) NeteaseAppendPlaylist(c *gin.Context) {
+	if a.neteaseUnavailable(c) {
+		return
+	}
+	var input struct {
+		PlaylistID uint               `json:"playlist_id"`
+		Tracks     []model.MusicTrack `json:"tracks"`
+	}
+	if !bindJSON(c, &input) {
+		return
+	}
+	playlist, imported, duplicates, err := a.netease.AppendToPlaylist(input.PlaylistID, input.Tracks)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	success(c, gin.H{"playlist": playlist, "imported": imported, "duplicates": duplicates})
+}
+
 func (a *API) NeteaseImportPlaylist(c *gin.Context) {
 	if a.neteaseUnavailable(c) {
 		return
@@ -214,6 +265,42 @@ func (a *API) S3Import(c *gin.Context) {
 		return
 	}
 	success(c, importResult(playlist, duplicates))
+}
+
+func (a *API) S3AppendPlaylist(c *gin.Context) {
+	if a.s3Unavailable(c, true) {
+		return
+	}
+	var input struct {
+		PlaylistID uint     `json:"playlist_id"`
+		Keys       []string `json:"keys"`
+	}
+	if !bindJSON(c, &input) {
+		return
+	}
+	playlist, imported, duplicates, err := a.s3.AppendToPlaylist(input.PlaylistID, input.Keys)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	success(c, gin.H{"playlist": playlist, "imported": imported, "duplicates": duplicates})
+}
+
+func (a *API) S3DeleteObject(c *gin.Context) {
+	if a.s3Unavailable(c, true) {
+		return
+	}
+	var input struct {
+		Key string `json:"key"`
+	}
+	if !bindJSON(c, &input) {
+		return
+	}
+	if err := a.s3.DeleteObject(c.Request.Context(), input.Key); err != nil {
+		handleError(c, err)
+		return
+	}
+	success(c, gin.H{"deleted": true})
 }
 
 func importResult(playlist model.Playlist, duplicates int) gin.H {

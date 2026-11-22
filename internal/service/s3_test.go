@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"homepage/internal/database"
 	"homepage/internal/model"
+	"homepage/internal/repository"
 )
 
 func TestS3ConfigObjectsImportPlaybackAndLyrics(t *testing.T) {
@@ -67,6 +70,9 @@ func TestS3ConfigObjectsImportPlaybackAndLyrics(t *testing.T) {
 	if err != nil || len(playlist.Tracks) != 1 || duplicates != 0 {
 		t.Fatalf("S3 导入错误: %+v, %v", playlist, err)
 	}
+	if _, _, err := provider.Import(context.Background(), " s3 LIST ", 0, []string{"music/song.mp3"}); err == nil || err.Error() != "播放列表名称已存在" {
+		t.Fatalf("S3 导入未阻止重名: %v", err)
+	}
 	playback, err := provider.Playback(context.Background(), playlist.Tracks[0])
 	if err != nil || playback.URL != "https://cdn.example.com/audio/music/song.mp3" {
 		t.Fatalf("公开播放地址错误: %+v, %v", playback, err)
@@ -90,5 +96,145 @@ func TestS3ConfigObjectsImportPlaybackAndLyrics(t *testing.T) {
 	playback, err = provider.Playback(context.Background(), model.MusicTrack{Source: "s3", ObjectKey: "music/song.mp3"})
 	if err != nil || !strings.Contains(playback.URL, "X-Amz-Signature=") || playback.ExpiresAt == nil || playback.ExpiresAt.Before(before) {
 		t.Fatalf("预签名播放地址错误: %+v, %v", playback, err)
+	}
+}
+
+func TestS3AppendAndDeleteObject(t *testing.T) {
+	deleteCalls := 0
+	deleteStatus := http.StatusInternalServerError
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/music/music/song.mp3" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") == "" {
+			t.Error("S3 删除请求缺少签名")
+		}
+		deleteCalls++
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(deleteStatus)
+		if deleteStatus == http.StatusNotFound {
+			fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>missing</Message></Error>`)
+		} else if deleteStatus >= http.StatusBadRequest {
+			fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>InternalError</Code><Message>failed</Message></Error>`)
+		}
+	}))
+	defer server.Close()
+	repo := providerTestRepository(t)
+	provider := NewS3Service(repo, server.Client())
+	if err := provider.SaveConfig(S3Config{
+		Endpoint: server.URL, Region: "auto", Bucket: "music", AccessKeyID: "access",
+		SecretAccessKey: "secret", Prefix: "music", ForcePathStyle: true, AccessMode: "presigned",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := provider.Import(context.Background(), "First", 0, []string{"music/song.mp3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := model.Playlist{Name: "Second", Enabled: true}
+	if err := repo.SavePlaylist(&second); err != nil {
+		t.Fatal(err)
+	}
+	updated, imported, duplicates, err := provider.AppendToPlaylist(second.ID, []string{"music/song.mp3"})
+	if err != nil || imported != 1 || duplicates != 0 || len(updated.Tracks) != 1 || updated.Tracks[0].ID != first.Tracks[0].ID {
+		t.Fatalf("S3 追加或跨列表复用错误: imported=%d duplicates=%d %+v, %v", imported, duplicates, updated, err)
+	}
+	updated, imported, duplicates, err = provider.AppendToPlaylist(second.ID, []string{"music/song.mp3"})
+	if err != nil || imported != 0 || duplicates != 1 || len(updated.Tracks) != 1 {
+		t.Fatalf("S3 重复追加计数错误: imported=%d duplicates=%d %+v, %v", imported, duplicates, updated, err)
+	}
+	invalidSelections := [][]string{nil, {"music/song.mp3", "music/song.mp3"}, {"other/song.mp3"}}
+	tooMany := make([]string, s3MaxObjects+1)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("music/%d.mp3", index)
+	}
+	invalidSelections = append(invalidSelections, tooMany)
+	for _, keys := range invalidSelections {
+		if _, _, _, err := provider.AppendToPlaylist(second.ID, keys); err == nil {
+			t.Fatalf("非法 S3 选择应被拒绝: %v", keys)
+		}
+	}
+	if _, _, _, err := provider.AppendToPlaylist(second.ID+1000, []string{"music/song.mp3"}); err == nil {
+		t.Fatal("向不存在的列表追加 S3 对象应失败")
+	}
+
+	duplicate := model.MusicTrack{
+		Title: "Historical duplicate", Source: "s3", ObjectKey: "music/song.mp3", Enabled: true,
+		PlaylistIDs: []uint{second.ID},
+	}
+	if err := repo.SaveTrack(&duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.DeleteObject(context.Background(), "music/song.mp3"); err == nil || !strings.Contains(err.Error(), "数据库关联已清理") {
+		t.Fatalf("OSS 删除失败应返回可重试的部分失败错误: %v", err)
+	}
+	if deleteCalls == 0 {
+		t.Fatal("未请求 OSS 删除")
+	}
+	tracks, err := repo.Tracks(false)
+	if err != nil || len(tracks) != 0 {
+		t.Fatalf("OSS 删除失败后数据库关联仍应已清理: %+v, %v", tracks, err)
+	}
+	for _, id := range []uint{first.ID, second.ID} {
+		playlist, err := repo.PlaylistByID(id, false)
+		if err != nil || len(playlist.Tracks) != 0 {
+			t.Fatalf("S3 曲目的列表关联未全部清理: %+v, %v", playlist, err)
+		}
+	}
+	deleteStatus = http.StatusNotFound
+	if err := provider.DeleteObject(context.Background(), "music/song.mp3"); err != nil {
+		t.Fatalf("对象不存在时应可幂等重试: %v", err)
+	}
+	if deleteCalls < 2 {
+		t.Fatal("部分失败后重试未再次请求 OSS")
+	}
+	if err := provider.DeleteObject(context.Background(), "other/song.mp3"); err == nil {
+		t.Fatal("删除配置前缀之外的对象应失败")
+	}
+}
+
+func TestS3DeleteObjectDatabaseFailureSkipsOSS(t *testing.T) {
+	deleteCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deleteCalls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	db, err := database.Open(filepath.Join(t.TempDir(), "s3-delete.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(db)
+	provider := NewS3Service(repo, server.Client())
+	if err := provider.SaveConfig(S3Config{
+		Endpoint: server.URL, Region: "auto", Bucket: "music", AccessKeyID: "access",
+		SecretAccessKey: "secret", Prefix: "music", ForcePathStyle: true, AccessMode: "presigned",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	track := model.MusicTrack{Title: "S3", Source: "s3", ObjectKey: "music/song.mp3", Enabled: true, PlaylistIDs: []uint{}}
+	if err := repo.SaveTrack(&track); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TRIGGER fail_s3_track_delete BEFORE DELETE ON music_tracks BEGIN SELECT RAISE(FAIL, 'forced delete failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.DeleteObject(context.Background(), "music/song.mp3"); err == nil {
+		t.Fatal("数据库失败应返回错误")
+	}
+	if deleteCalls != 0 {
+		t.Fatal("数据库失败时不应请求 OSS")
+	}
+	if _, err := repo.TrackByID(track.ID); err != nil {
+		t.Fatalf("数据库删除事务失败后曲目应保留: %v", err)
 	}
 }

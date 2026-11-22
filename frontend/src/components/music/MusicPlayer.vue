@@ -1,9 +1,28 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Music2, Pause, Play, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-vue-next'
+import { Music2, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-vue-next'
 import { publicApi } from '@/api'
 import type { MusicSettings, Track } from '@/types'
 import { findCurrentLrcLine, parseLrc, type LrcLine } from '@/utils/lrc'
+
+type PlaybackMode = 'random' | 'sequential' | 'repeat-one'
+
+const playbackModeKey = 'music-playback-mode'
+const playbackModes: PlaybackMode[] = ['random', 'sequential', 'repeat-one']
+const playbackModeLabels: Record<PlaybackMode, string> = {
+  random: '随机播放',
+  sequential: '顺序播放',
+  'repeat-one': '单曲循环',
+}
+
+function readPlaybackMode(): PlaybackMode {
+  try {
+    const saved = localStorage.getItem(playbackModeKey) as PlaybackMode | null
+    return saved && playbackModes.includes(saved) ? saved : 'random'
+  } catch {
+    return 'random'
+  }
+}
 
 const props = defineProps<{ tracks: Track[]; settings: MusicSettings }>()
 const audio = ref<HTMLAudioElement | null>(null)
@@ -18,7 +37,9 @@ const error = ref('')
 const playbackUrl = ref('')
 const coverFailed = ref(false)
 const lyrics = ref<LrcLine[]>([])
+const playbackMode = ref<PlaybackMode>(readPlaybackMode())
 const currentTrack = computed(() => enabledTracks.value[currentIndex.value])
+const playbackModeLabel = computed(() => playbackModeLabels[playbackMode.value])
 const coverUrl = computed(() => currentTrack.value ? publicApi.coverUrl(currentTrack.value.id) : '')
 const progress = computed(() => duration.value ? currentTime.value / duration.value * 100 : 0)
 const currentLyricIndex = computed(() => findCurrentLrcLine(lyrics.value, currentTime.value))
@@ -130,6 +151,42 @@ function changeTrack(index: number, continuePlaying = playRequested || playing.v
   if (playRequested) void requestPlaybackAndPlay(track, serial)
 }
 
+function cyclePlaybackMode() {
+  const index = playbackModes.indexOf(playbackMode.value)
+  playbackMode.value = playbackModes[(index + 1) % playbackModes.length]
+  try {
+    localStorage.setItem(playbackModeKey, playbackMode.value)
+  } catch {
+    // 无法持久化时仍允许当前页面切换播放模式。
+  }
+}
+
+function randomTrackIndex() {
+  const length = enabledTracks.value.length
+  if (length <= 1) return 0
+  const candidate = Math.floor(Math.random() * (length - 1))
+  return candidate >= currentIndex.value ? candidate + 1 : candidate
+}
+
+function changeTrackBy(offset: number, continuePlaying = playRequested || playing.value) {
+  const index = playbackMode.value === 'random' ? randomTrackIndex() : currentIndex.value + offset
+  changeTrack(index, continuePlaying)
+}
+
+function handleEnded() {
+  if (disposed) return
+  if (playbackMode.value !== 'repeat-one') {
+    changeTrackBy(1, true)
+    return
+  }
+  if (!audio.value || !currentTrack.value) return
+  error.value = ''
+  playRequested = true
+  audio.value.currentTime = 0
+  currentTime.value = 0
+  void playLoadedAudio(trackSerial)
+}
+
 function seek(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
   if (audio.value && Number.isFinite(duration.value)) {
@@ -178,7 +235,7 @@ onMounted(async () => {
     if (disposed) return
     enabledTracks.value = sortedTracks(props.tracks)
   }
-  changeTrack(0, false)
+  changeTrack(playbackMode.value === 'random' ? randomTrackIndex() : 0, false)
 })
 
 onBeforeUnmount(() => {
@@ -201,7 +258,7 @@ onBeforeUnmount(() => {
       @timeupdate="handleTimeUpdate"
       @loadedmetadata="handleDurationChange"
       @durationchange="handleDurationChange"
-      @ended="!disposed && changeTrack(currentIndex + 1, true)"
+      @ended="handleEnded"
       @error="handleAudioError"
     />
     <div v-if="currentTrack" class="flex items-center gap-3.5">
@@ -229,11 +286,16 @@ onBeforeUnmount(() => {
         </div>
         <div class="mt-1.5 flex items-center justify-between">
           <div class="flex items-center gap-0.5">
-            <button class="icon-button size-7" type="button" aria-label="上一曲" @click="changeTrack(currentIndex - 1)"><SkipBack :size="13" /></button>
+            <button class="icon-button size-7" type="button" :aria-label="`${playbackModeLabel}，点击切换播放模式`" :title="`${playbackModeLabel}，点击切换`" @click="cyclePlaybackMode">
+              <Shuffle v-if="playbackMode === 'random'" :size="13" />
+              <Repeat v-else-if="playbackMode === 'sequential'" :size="13" />
+              <Repeat1 v-else :size="13" />
+            </button>
+            <button class="icon-button size-7" type="button" aria-label="上一曲" @click="changeTrackBy(-1)"><SkipBack :size="13" /></button>
             <button class="icon-button size-8 bg-white/10 text-white hover:bg-white/15" type="button" :aria-label="playing ? '暂停' : '播放'" @click="togglePlay">
               <Pause v-if="playing" :size="14" fill="currentColor" /><Play v-else :size="14" class="ml-0.5" fill="currentColor" />
             </button>
-            <button class="icon-button size-7" type="button" aria-label="下一曲" @click="changeTrack(currentIndex + 1)"><SkipForward :size="13" /></button>
+            <button class="icon-button size-7" type="button" aria-label="下一曲" @click="changeTrackBy(1)"><SkipForward :size="13" /></button>
           </div>
           <div class="flex items-center gap-1">
             <button class="icon-button size-7" type="button" aria-label="静音切换" @click="toggleMute">
