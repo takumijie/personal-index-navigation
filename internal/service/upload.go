@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 type UploadService struct {
@@ -24,12 +25,14 @@ func NewUploadService(root string, maxImageBytes, maxMusicBytes int64) *UploadSe
 }
 
 func (s *UploadService) Save(kind string, header *multipart.FileHeader) (string, error) {
-	if kind != "images" && kind != "music" {
+	if kind != "images" && kind != "music" && kind != "lyrics" {
 		return "", invalid("上传类型无效")
 	}
 	limit := s.maxImageBytes
 	if kind == "music" {
 		limit = s.maxMusicBytes
+	} else if kind == "lyrics" {
+		limit = 1 << 20
 	}
 	if header.Size <= 0 || header.Size > limit {
 		return "", invalid("上传文件为空或超过大小限制")
@@ -43,14 +46,21 @@ func (s *UploadService) Save(kind string, header *multipart.FileHeader) (string,
 		return "", err
 	}
 	defer file.Close()
-	prefix := make([]byte, 512)
-	n, err := io.ReadFull(file, prefix)
-	if err != nil && err != io.ErrUnexpectedEOF {
-		return "", invalid("无法读取上传文件")
-	}
-	prefix = prefix[:n]
-	if !validFileContent(kind, ext, prefix, http.DetectContentType(prefix)) {
-		return "", invalid("上传文件 MIME 或内容无效")
+	if kind == "lyrics" {
+		data, err := io.ReadAll(io.LimitReader(file, limit+1))
+		if err != nil || len(data) == 0 || int64(len(data)) > limit || !utf8.Valid(data) || !plainText(string(data), true) {
+			return "", invalid("歌词必须是有效的 UTF-8 文本")
+		}
+	} else {
+		prefix := make([]byte, 512)
+		n, err := io.ReadFull(file, prefix)
+		if err != nil && err != io.ErrUnexpectedEOF {
+			return "", invalid("无法读取上传文件")
+		}
+		prefix = prefix[:n]
+		if !validFileContent(kind, ext, prefix, http.DetectContentType(prefix)) {
+			return "", invalid("上传文件 MIME 或内容无效")
+		}
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return "", err
@@ -96,6 +106,9 @@ func (s *UploadService) Save(kind string, header *multipart.FileHeader) (string,
 func allowedExtension(kind, ext string) bool {
 	if kind == "images" {
 		return oneOf(ext, ".jpg", ".jpeg", ".png", ".gif", ".webp")
+	}
+	if kind == "lyrics" {
+		return ext == ".lrc"
 	}
 	return oneOf(ext, ".mp3", ".flac", ".wav", ".ogg")
 }

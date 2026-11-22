@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -156,29 +157,73 @@ func (r *Repository) Tracks(enabledOnly bool) ([]model.MusicTrack, error) {
 	if enabledOnly {
 		tx = tx.Where("enabled = ?", true)
 	}
-	return items, tx.Find(&items).Error
+	if err := tx.Find(&items).Error; err != nil {
+		return items, err
+	}
+	return items, r.loadTrackPlaylistIDs(items)
 }
 
 func (r *Repository) TrackByID(id uint) (model.MusicTrack, error) {
 	var item model.MusicTrack
-	return item, r.db.First(&item, id).Error
+	if err := r.db.First(&item, id).Error; err != nil {
+		return item, err
+	}
+	items := []model.MusicTrack{item}
+	if err := r.loadTrackPlaylistIDs(items); err != nil {
+		return item, err
+	}
+	return items[0], nil
+}
+
+func (r *Repository) PublicTrackByID(id uint) (model.MusicTrack, error) {
+	var item model.MusicTrack
+	err := r.db.Model(&model.MusicTrack{}).
+		Joins("JOIN playlist_tracks ON playlist_tracks.track_id = music_tracks.id").
+		Joins("JOIN playlists ON playlists.id = playlist_tracks.playlist_id").
+		Where("music_tracks.id = ? AND music_tracks.enabled = ? AND playlists.enabled = ?", id, true, true).
+		First(&item).Error
+	return item, err
 }
 
 func (r *Repository) SaveTrack(item *model.MusicTrack) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		isNew := item.ID == 0
 		if err := tx.Save(item).Error; err != nil {
 			return err
 		}
-		return syncPlaylist(tx)
+		if item.PlaylistIDs == nil {
+			if !isNew {
+				return nil
+			}
+			playlist, err := defaultPlaylist(tx)
+			if err != nil {
+				return err
+			}
+			item.PlaylistIDs = []uint{playlist.ID}
+		}
+		if err := tx.Where("track_id = ?", item.ID).Delete(&model.PlaylistTrack{}).Error; err != nil {
+			return err
+		}
+		seen := make(map[uint]struct{}, len(item.PlaylistIDs))
+		for _, playlistID := range item.PlaylistIDs {
+			if _, ok := seen[playlistID]; ok {
+				continue
+			}
+			seen[playlistID] = struct{}{}
+			if err := tx.Create(&model.PlaylistTrack{PlaylistID: playlistID, TrackID: item.ID, Sort: item.Sort}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
 func (r *Repository) DeleteTrack(id uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Delete(&model.MusicTrack{}, id).Error; err != nil {
+		if err := tx.Where("track_id = ?", id).Delete(&model.PlaylistTrack{}).Error; err != nil {
 			return err
 		}
-		return syncPlaylist(tx)
+		return tx.Delete(&model.MusicTrack{}, id).Error
 	})
 }
 
@@ -187,34 +232,181 @@ func (r *Repository) Playlist() (model.Playlist, error) {
 	if err := r.db.Where("enabled = ?", true).Order("sort, id").First(&playlist).Error; err != nil {
 		return playlist, err
 	}
+	return r.PlaylistByID(playlist.ID, true)
+}
+
+func (r *Repository) Playlists(enabledOnly, withTracks bool) ([]model.Playlist, error) {
+	items := make([]model.Playlist, 0)
+	tx := r.db.Order("sort, id")
+	if enabledOnly {
+		tx = tx.Where("enabled = ?", true)
+	}
+	if err := tx.Find(&items).Error; err != nil {
+		return items, err
+	}
+	if withTracks {
+		for i := range items {
+			item, err := r.PlaylistByID(items[i].ID, enabledOnly)
+			if err != nil {
+				return items, err
+			}
+			items[i] = item
+		}
+	}
+	return items, nil
+}
+
+func (r *Repository) PlaylistByID(id uint, enabledOnly bool) (model.Playlist, error) {
+	var playlist model.Playlist
+	tx := r.db
+	if enabledOnly {
+		tx = tx.Where("enabled = ?", true)
+	}
+	if err := tx.First(&playlist, id).Error; err != nil {
+		return playlist, err
+	}
 	playlist.Tracks = make([]model.MusicTrack, 0)
-	err := r.db.Model(&model.MusicTrack{}).
+	trackQuery := r.db.Model(&model.MusicTrack{}).
 		Joins("JOIN playlist_tracks ON playlist_tracks.track_id = music_tracks.id").
-		Where("playlist_tracks.playlist_id = ? AND music_tracks.enabled = ?", playlist.ID, true).
-		Order("playlist_tracks.sort, music_tracks.id").Find(&playlist.Tracks).Error
+		Where("playlist_tracks.playlist_id = ?", playlist.ID)
+	if enabledOnly {
+		trackQuery = trackQuery.Where("music_tracks.enabled = ?", true)
+	}
+	err := trackQuery.Order("playlist_tracks.sort, music_tracks.id").Find(&playlist.Tracks).Error
 	return playlist, err
 }
 
-func syncPlaylist(tx *gorm.DB) error {
+func (r *Repository) SavePlaylist(item *model.Playlist) error { return r.db.Save(item).Error }
+
+func (r *Repository) DeletePlaylist(id uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("playlist_id = ?", id).Delete(&model.PlaylistTrack{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.Playlist{}, id).Error
+	})
+}
+
+func (r *Repository) SetPlaylistTracks(id uint, trackIDs []uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var playlist model.Playlist
+		if err := tx.First(&playlist, id).Error; err != nil {
+			return err
+		}
+		seen := make(map[uint]struct{}, len(trackIDs))
+		unique := make([]uint, 0, len(trackIDs))
+		for _, trackID := range trackIDs {
+			if _, ok := seen[trackID]; ok {
+				continue
+			}
+			seen[trackID] = struct{}{}
+			unique = append(unique, trackID)
+		}
+		if len(unique) > 0 {
+			var count int64
+			if err := tx.Model(&model.MusicTrack{}).Where("id IN ?", unique).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != int64(len(unique)) {
+				return gorm.ErrRecordNotFound
+			}
+		}
+		if err := tx.Where("playlist_id = ?", id).Delete(&model.PlaylistTrack{}).Error; err != nil {
+			return err
+		}
+		for sort, trackID := range unique {
+			if err := tx.Create(&model.PlaylistTrack{PlaylistID: id, TrackID: trackID, Sort: sort}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *Repository) ImportPlaylist(playlist model.Playlist, tracks []model.MusicTrack) (model.Playlist, int, error) {
+	duplicates := 0
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&playlist).Error; err != nil {
+			return err
+		}
+		seen := make(map[uint]struct{}, len(tracks))
+		for _, candidate := range tracks {
+			var track model.MusicTrack
+			query := tx.Where("source = ?", candidate.Source)
+			if candidate.Source == "netease" {
+				query = query.Where("external_id = ?", candidate.ExternalID)
+			} else {
+				query = query.Where("object_key = ?", candidate.ObjectKey)
+			}
+			err := query.First(&track).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				track = candidate
+				track.ID = 0
+				track.PlaylistIDs = nil
+				if err := tx.Create(&track).Error; err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			} else {
+				duplicates++
+			}
+			if _, ok := seen[track.ID]; ok {
+				continue
+			}
+			seen[track.ID] = struct{}{}
+			if err := tx.Create(&model.PlaylistTrack{PlaylistID: playlist.ID, TrackID: track.ID, Sort: len(playlist.Tracks)}).Error; err != nil {
+				return err
+			}
+			playlist.Tracks = append(playlist.Tracks, track)
+		}
+		return nil
+	})
+	return playlist, duplicates, err
+}
+
+func (r *Repository) ProviderConfig(provider string, target any) error {
+	var row model.MusicProviderConfig
+	err := r.db.Where("provider = ?", provider).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(row.Data), target)
+}
+
+func (r *Repository) SaveProviderConfig(provider string, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	var row model.MusicProviderConfig
+	err = r.db.Where("provider = ?", provider).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return r.db.Create(&model.MusicProviderConfig{Provider: provider, Data: string(data)}).Error
+	}
+	if err != nil {
+		return err
+	}
+	return r.db.Model(&row).Updates(map[string]any{"data": string(data), "updated_at": time.Now()}).Error
+}
+
+func defaultPlaylist(tx *gorm.DB) (model.Playlist, error) {
 	var playlist model.Playlist
 	err := tx.Order("sort, id").First(&playlist).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		playlist = model.Playlist{Name: "默认播放列表", Enabled: true}
-		if err := tx.Create(&playlist).Error; err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
+		err = tx.Create(&playlist).Error
 	}
-	if err := tx.Where("playlist_id = ?", playlist.ID).Delete(&model.PlaylistTrack{}).Error; err != nil {
-		return err
-	}
-	var tracks []model.MusicTrack
-	if err := tx.Where("enabled = ?", true).Order("sort, id").Find(&tracks).Error; err != nil {
-		return err
-	}
-	for _, track := range tracks {
-		if err := tx.Create(&model.PlaylistTrack{PlaylistID: playlist.ID, TrackID: track.ID, Sort: track.Sort}).Error; err != nil {
+	return playlist, err
+}
+
+func (r *Repository) loadTrackPlaylistIDs(items []model.MusicTrack) error {
+	for i := range items {
+		items[i].PlaylistIDs = make([]uint, 0)
+		if err := r.db.Model(&model.PlaylistTrack{}).Where("track_id = ?", items[i].ID).Order("playlist_id").Pluck("playlist_id", &items[i].PlaylistIDs).Error; err != nil {
 			return err
 		}
 	}

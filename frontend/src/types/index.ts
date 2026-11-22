@@ -59,6 +59,11 @@ export interface TerminalSettings {
   fastfetch_loading_ms: number
 }
 
+export interface MusicSettings {
+  lyrics_enabled: boolean
+  playlist_id: number
+}
+
 export interface Settings {
   site_title: string
   timezone: string
@@ -68,9 +73,12 @@ export interface Settings {
   cards: CardSettings
   loader: LoaderSettings
   terminal: TerminalSettings
+  music: MusicSettings
   guestbook_auto_publish: boolean
   guestbook_max_length: number
 }
+
+export type TrackSource = 'local' | 'netease' | 's3' | 'remote'
 
 export interface Track {
   id: number
@@ -79,9 +87,86 @@ export interface Track {
   album: string
   cover: string
   url: string
-  source: string
+  source: TrackSource
+  external_id: string
+  object_key: string
+  lyric_path: string
   sort: number
   enabled: boolean
+  playlist_ids?: number[]
+}
+
+export interface Playlist {
+  id: number
+  name: string
+  sort: number
+  enabled: boolean
+  tracks: Track[]
+}
+
+export interface Playback {
+  url: string
+  expires_at?: string
+}
+
+export interface Lyrics {
+  text: string
+  format: 'lrc'
+}
+
+export interface NeteaseStatus {
+  authenticated: boolean
+  nickname?: string
+  avatar?: string
+}
+
+export interface NeteaseQrSession {
+  session_id: string
+  qr_image: string
+  expires_at: string
+}
+
+export interface NeteaseQrState {
+  status: 'waiting' | 'scanned' | 'success' | 'expired'
+  message: string
+}
+
+export interface NeteaseSearchResult {
+  tracks: Track[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface ImportResult {
+  playlist: Playlist
+  imported: number
+  duplicates: number
+}
+
+export interface S3Config {
+  endpoint: string
+  region: string
+  bucket: string
+  access_key_id: string
+  secret_access_key?: string
+  prefix: string
+  force_path_style: boolean
+  public_base_url: string
+  access_mode: 'public' | 'presigned'
+  has_secret?: boolean
+}
+
+export interface S3Object {
+  key: string
+  size: number
+  last_modified?: string
+}
+
+export interface S3ObjectsResult {
+  objects: S3Object[]
+  next_token: string
+  has_more: boolean
 }
 
 export interface GuestbookEntry {

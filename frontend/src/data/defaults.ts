@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cards: { profile: true, navigation: true, devices: true, terminal: true, clock: true },
   loader: { theme: 'dark', sound_enabled: false, watermark_title: '', watermark_subtitle: '', watermark_caption: '', badge_image: '' },
   terminal: { fastfetch_loading_ms: 2000 },
+  music: { lyrics_enabled: true, playlist_id: 0 },
   guestbook_auto_publish: false,
   guestbook_max_length: 280,
 }

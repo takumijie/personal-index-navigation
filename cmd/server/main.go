@@ -56,7 +56,17 @@ func run() error {
 	content := service.NewContentService(repo)
 	auth := service.NewAuthService(repo)
 	uploads := service.NewUploadService(cfg.Storage.Path, cfg.Upload.MaxImageBytes, cfg.Upload.MaxMusicBytes)
-	api := handler.NewAPI(content, auth, uploads)
+	music := service.NewMusicService(repo, cfg.Storage.Path)
+	providerClient := &http.Client{Timeout: 20 * time.Second}
+	netease, err := service.NewNeteaseService(repo, providerClient, "https://music-api.ilibilib.top")
+	if err != nil {
+		return fmt.Errorf("初始化网易云音乐: %w", err)
+	}
+	s3 := service.NewS3Service(repo, providerClient)
+	music.RegisterProvider("netease", netease)
+	music.RegisterProvider("s3", s3)
+	api := handler.NewAPI(content, auth, uploads, music)
+	api.SetMusicProviders(netease, s3)
 	router, err := handler.NewRouter(cfg, api)
 	if err != nil {
 		return err
@@ -64,9 +74,9 @@ func run() error {
 	server := &http.Server{
 		Addr: cfg.Address(), Handler: router,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout: 60 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout: 120 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

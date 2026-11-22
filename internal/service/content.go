@@ -14,8 +14,8 @@ import (
 )
 
 type ContentService struct {
-	repo            *repository.Repository
-	guestbookLimit  *IPRateLimiter
+	repo           *repository.Repository
+	guestbookLimit *IPRateLimiter
 }
 
 func NewContentService(repo *repository.Repository) *ContentService {
@@ -192,6 +192,11 @@ func (s *ContentService) UpdateSettings(settings model.Settings) error {
 	if err := validateSettings(settings); err != nil {
 		return err
 	}
+	if settings.Music.PlaylistID != 0 {
+		if _, err := s.PlaylistByID(settings.Music.PlaylistID, true); err != nil {
+			return err
+		}
+	}
 	return s.repo.SaveSettings(settings)
 }
 
@@ -201,6 +206,9 @@ func (s *ContentService) Tracks(enabledOnly bool) ([]model.MusicTrack, error) {
 
 func (s *ContentService) CreateTrack(item model.MusicTrack) (model.MusicTrack, error) {
 	item.ID = 0
+	if item.Source == "remote" {
+		return item, invalid("请使用本地、网易云或 S3 来源创建曲目")
+	}
 	if err := validateTrack(item); err != nil {
 		return item, err
 	}
@@ -232,3 +240,60 @@ func (s *ContentService) DeleteTrack(id uint) error {
 }
 
 func (s *ContentService) Playlist() (model.Playlist, error) { return s.repo.Playlist() }
+
+func (s *ContentService) Playlists(enabledOnly bool) ([]model.Playlist, error) {
+	return s.repo.Playlists(enabledOnly, true)
+}
+
+func (s *ContentService) PlaylistByID(id uint, enabledOnly bool) (model.Playlist, error) {
+	playlist, err := s.repo.PlaylistByID(id, enabledOnly)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return playlist, notFound("播放列表不存在或已停用")
+	}
+	return playlist, err
+}
+
+func (s *ContentService) CreatePlaylist(item model.Playlist) (model.Playlist, error) {
+	item.ID = 0
+	item.Tracks = nil
+	if err := validatePlaylist(item); err != nil {
+		return item, err
+	}
+	return item, s.repo.SavePlaylist(&item)
+}
+
+func (s *ContentService) UpdatePlaylist(id uint, item model.Playlist) (model.Playlist, error) {
+	current, err := s.repo.PlaylistByID(id, false)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return item, notFound("播放列表不存在")
+	}
+	if err != nil {
+		return item, err
+	}
+	if err := validatePlaylist(item); err != nil {
+		return item, err
+	}
+	item.ID, item.CreatedAt, item.Tracks = current.ID, current.CreatedAt, current.Tracks
+	return item, s.repo.SavePlaylist(&item)
+}
+
+func (s *ContentService) DeletePlaylist(id uint) error {
+	if _, err := s.repo.PlaylistByID(id, false); errors.Is(err, gorm.ErrRecordNotFound) {
+		return notFound("播放列表不存在")
+	} else if err != nil {
+		return err
+	}
+	return s.repo.DeletePlaylist(id)
+}
+
+func (s *ContentService) SetPlaylistTracks(id uint, trackIDs []uint) (model.Playlist, error) {
+	if len(trackIDs) > 10000 {
+		return model.Playlist{}, invalid("播放列表曲目数量超过限制")
+	}
+	if err := s.repo.SetPlaylistTracks(id, trackIDs); errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Playlist{}, notFound("播放列表或曲目不存在")
+	} else if err != nil {
+		return model.Playlist{}, err
+	}
+	return s.PlaylistByID(id, false)
+}

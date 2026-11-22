@@ -51,7 +51,7 @@ func resourceURL(value string, requiredValue bool) bool {
 	if value == "" {
 		return !requiredValue
 	}
-	if strings.HasPrefix(value, "/images/") || strings.HasPrefix(value, "/storage/images/") || strings.HasPrefix(value, "/storage/music/") {
+	if strings.HasPrefix(value, "/images/") || strings.HasPrefix(value, "/storage/images/") || strings.HasPrefix(value, "/storage/music/") || strings.HasPrefix(value, "/storage/lyrics/") {
 		return !strings.Contains(value, "\\") && path.Clean(value) == value && !strings.Contains(value, "..")
 	}
 	return httpURL(value)
@@ -96,16 +96,39 @@ func validateTrack(item model.MusicTrack) error {
 	if !required(item.Title, 200) || !validLength(item.Artist, 200) || !validLength(item.Album, 200) {
 		return invalid("曲目标题、艺术家或专辑无效")
 	}
-	for _, value := range []string{item.Artist, item.Album, item.Source} {
+	for _, value := range []string{item.Artist, item.Album, item.Source, item.ExternalID, item.ObjectKey} {
 		if !plainText(value, false) {
 			return invalid("曲目信息包含控制字符")
 		}
 	}
-	if !resourceURL(item.URL, true) || !resourceURL(item.Cover, false) || !validLength(item.URL, 2048) || !validLength(item.Cover, 2048) {
-		return invalid("曲目或封面 URL 无效")
+	if !resourceURL(item.Cover, false) || !validLength(item.URL, 2048) || !validLength(item.Cover, 2048) || !resourceURL(item.LyricPath, false) {
+		return invalid("曲目、封面或歌词地址无效")
 	}
-	if !oneOf(item.Source, "local", "remote") || item.Sort < 0 || item.Sort > 1000000 {
-		return invalid("曲目来源或排序无效")
+	if item.Sort < 0 || item.Sort > 1000000 {
+		return invalid("曲目排序无效")
+	}
+	switch item.Source {
+	case "local", "remote":
+		if !resourceURL(item.URL, true) {
+			return invalid("曲目 URL 无效")
+		}
+	case "netease":
+		if !required(item.ExternalID, 30) {
+			return invalid("网易云歌曲 ID 无效")
+		}
+	case "s3":
+		if !required(item.ObjectKey, 1024) || strings.HasPrefix(item.ObjectKey, "/") {
+			return invalid("S3 Object Key 无效")
+		}
+	default:
+		return invalid("曲目来源无效")
+	}
+	return nil
+}
+
+func validatePlaylist(item model.Playlist) error {
+	if !required(item.Name, 100) || item.Sort < 0 || item.Sort > 1000000 {
+		return invalid("播放列表名称或排序无效")
 	}
 	return nil
 }

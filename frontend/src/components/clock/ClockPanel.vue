@@ -21,6 +21,6 @@ const { zonedTime, zonedDate, hands } = useClock(toRef(props, 'settings'))
       </div>
     </div>
     <div class="hidden h-[82px] w-px bg-white/[0.08] md:block" />
-    <MusicPlayer :tracks="tracks" class="min-w-0 flex-1" />
+    <MusicPlayer :tracks="tracks" :settings="settings.music" class="min-w-0 flex-1" />
   </section>
 </template>

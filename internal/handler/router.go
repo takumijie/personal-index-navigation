@@ -19,6 +19,7 @@ import (
 func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	gin.SetMode(cfg.Server.Mode)
 	router := gin.New()
+	router.HandleMethodNotAllowed = true
 	if len(cfg.Server.TrustedProxies) == 0 {
 		if err := router.SetTrustedProxies(nil); err != nil {
 			return nil, err
@@ -50,6 +51,11 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	v1.POST("/guestbook", api.CreateGuestbook)
 	v1.GET("/music/tracks", api.Tracks)
 	v1.GET("/music/playlist", api.Playlist)
+	v1.GET("/music/playlists", api.Playlists)
+	v1.GET("/music/playlists/:id", api.PublicPlaylistByID)
+	v1.GET("/music/tracks/:id/playback", api.Playback)
+	v1.GET("/music/tracks/:id/lyrics", api.Lyrics)
+	v1.GET("/music/tracks/:id/cover", api.Cover)
 	v1.GET("/visitor", api.Visitor)
 	v1.POST("/visitor", api.Visitor)
 
@@ -73,17 +79,39 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	admin.DELETE("/guestbook/:id", api.DeleteGuestbook)
 	admin.GET("/settings", api.Settings)
 	admin.PUT("/settings", api.UpdateSettings)
-	admin.GET("/music/tracks", api.AdminTracks)
-	admin.POST("/music/tracks", api.CreateTrack)
-	admin.PUT("/music/tracks/:id", api.UpdateTrack)
-	admin.DELETE("/music/tracks/:id", api.DeleteTrack)
+	musicAdmin := admin.Group("/music", middleware.BodyLimit(1<<20))
+	musicAdmin.POST("/tracks/list", api.AdminTracks)
+	musicAdmin.POST("/tracks/create", api.CreateTrack)
+	musicAdmin.POST("/tracks/update", api.UpdateTrack)
+	musicAdmin.POST("/tracks/delete", api.DeleteTrack)
+	musicAdmin.POST("/playlists/list", api.AdminPlaylists)
+	musicAdmin.POST("/playlists/create", api.CreatePlaylist)
+	musicAdmin.POST("/playlists/update", api.UpdatePlaylist)
+	musicAdmin.POST("/playlists/delete", api.DeletePlaylist)
+	musicAdmin.POST("/playlists/tracks", api.SetPlaylistTracks)
+	musicAdmin.POST("/netease/qr/create", api.NeteaseQRCreate)
+	musicAdmin.POST("/netease/qr/check", api.NeteaseQRCheck)
+	musicAdmin.POST("/netease/status", api.NeteaseStatus)
+	musicAdmin.POST("/netease/logout", api.NeteaseLogout)
+	musicAdmin.POST("/netease/search", api.NeteaseSearch)
+	musicAdmin.POST("/netease/create-playlist", api.NeteaseCreatePlaylist)
+	musicAdmin.POST("/netease/import-playlist", api.NeteaseImportPlaylist)
+	musicAdmin.POST("/s3/config/read", api.S3ReadConfig)
+	musicAdmin.POST("/s3/config/save", api.S3SaveConfig)
+	musicAdmin.POST("/s3/test", api.S3Test)
+	musicAdmin.POST("/s3/objects/list", api.S3Objects)
+	musicAdmin.POST("/s3/import", api.S3Import)
 	admin.POST("/uploads/image", api.UploadImage)
 	admin.POST("/uploads/music", api.UploadMusic)
+	admin.POST("/uploads/lyrics", api.UploadLyrics)
 
 	assets, err := fs.Sub(web.Assets, "dist")
 	if err != nil {
 		return nil, err
 	}
+	router.NoMethod(func(c *gin.Context) {
+		fail(c, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
+	})
 	router.NoRoute(func(c *gin.Context) {
 		if c.Request.Method != http.MethodGet || strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/storage/") {
 			fail(c, http.StatusNotFound, "not_found", "接口或资源不存在")

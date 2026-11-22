@@ -257,15 +257,15 @@ func (a *API) CreateTrack(c *gin.Context) {
 }
 
 func (a *API) UpdateTrack(c *gin.Context) {
-	id, ok := parseID(c)
-	if !ok {
-		return
-	}
 	var item model.MusicTrack
 	if !bindJSON(c, &item) {
 		return
 	}
-	updated, err := a.content.UpdateTrack(id, item)
+	if item.ID == 0 {
+		fail(c, http.StatusBadRequest, "invalid_id", "曲目 ID 无效")
+		return
+	}
+	updated, err := a.content.UpdateTrack(item.ID, item)
 	if err != nil {
 		handleError(c, err)
 		return
@@ -274,11 +274,17 @@ func (a *API) UpdateTrack(c *gin.Context) {
 }
 
 func (a *API) DeleteTrack(c *gin.Context) {
-	id, ok := parseID(c)
-	if !ok {
+	var input struct {
+		ID uint `json:"id"`
+	}
+	if !bindJSON(c, &input) {
 		return
 	}
-	if err := a.content.DeleteTrack(id); err != nil {
+	if input.ID == 0 {
+		fail(c, http.StatusBadRequest, "invalid_id", "曲目 ID 无效")
+		return
+	}
+	if err := a.content.DeleteTrack(input.ID); err != nil {
 		handleError(c, err)
 		return
 	}
@@ -288,6 +294,8 @@ func (a *API) DeleteTrack(c *gin.Context) {
 func (a *API) UploadImage(c *gin.Context) { a.upload(c, "images") }
 
 func (a *API) UploadMusic(c *gin.Context) { a.upload(c, "music") }
+
+func (a *API) UploadLyrics(c *gin.Context) { a.upload(c, "lyrics") }
 
 func (a *API) upload(c *gin.Context, kind string) {
 	header, err := c.FormFile("file")

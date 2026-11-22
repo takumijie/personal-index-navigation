@@ -25,8 +25,8 @@ export const mockDevices: Device[] = [
 ]
 
 export const mockTracks: Track[] = [
-  { id: 1, title: 'Evening Walk', artist: 'SoundHelix', album: 'Afterglow', cover: DEFAULT_DAY_BACKGROUND, url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', source: 'remote', sort: 1, enabled: true },
-  { id: 2, title: 'Midnight Signals', artist: 'SoundHelix', album: 'Afterglow', cover: DEFAULT_NIGHT_BACKGROUND, url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3', source: 'remote', sort: 2, enabled: true },
+  { id: 1, title: 'Evening Walk', artist: 'SoundHelix', album: 'Afterglow', cover: DEFAULT_DAY_BACKGROUND, url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', source: 'remote', external_id: '', object_key: '', lyric_path: '', sort: 1, enabled: true },
+  { id: 2, title: 'Midnight Signals', artist: 'SoundHelix', album: 'Afterglow', cover: DEFAULT_NIGHT_BACKGROUND, url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3', source: 'remote', external_id: '', object_key: '', lyric_path: '', sort: 2, enabled: true },
 ]
 
 export const mockGuestbook: GuestbookEntry[] = [

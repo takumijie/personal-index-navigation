@@ -74,17 +74,21 @@ type GuestbookEntry struct {
 }
 
 type MusicTrack struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Title     string    `json:"title"`
-	Artist    string    `json:"artist"`
-	Album     string    `json:"album"`
-	Cover     string    `json:"cover"`
-	URL       string    `json:"url"`
-	Source    string    `json:"source"`
-	Sort      int       `json:"sort"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"-"`
-	UpdatedAt time.Time `json:"-"`
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Title       string    `json:"title"`
+	Artist      string    `json:"artist"`
+	Album       string    `json:"album"`
+	Cover       string    `json:"cover"`
+	URL         string    `json:"url"`
+	Source      string    `json:"source"`
+	ExternalID  string    `gorm:"index:idx_music_external" json:"external_id"`
+	ObjectKey   string    `gorm:"index:idx_music_object" json:"object_key"`
+	LyricPath   string    `json:"lyric_path"`
+	Sort        int       `json:"sort"`
+	Enabled     bool      `json:"enabled"`
+	PlaylistIDs []uint    `gorm:"-" json:"playlist_ids"`
+	CreatedAt   time.Time `json:"-"`
+	UpdatedAt   time.Time `json:"-"`
 }
 
 func (MusicTrack) TableName() string { return "music_tracks" }
@@ -105,6 +109,14 @@ type PlaylistTrack struct {
 	TrackID    uint      `gorm:"primaryKey" json:"-"`
 	Sort       int       `json:"sort"`
 	CreatedAt  time.Time `json:"-"`
+}
+
+type MusicProviderConfig struct {
+	ID        uint      `gorm:"primaryKey" json:"-"`
+	Provider  string    `gorm:"uniqueIndex" json:"-"`
+	Data      string    `json:"-"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
 }
 
 type SiteSettings struct {
@@ -161,6 +173,11 @@ type TerminalSettings struct {
 	FastfetchLoadingMS int `json:"fastfetch_loading_ms"`
 }
 
+type MusicSettings struct {
+	LyricsEnabled bool `json:"lyrics_enabled"`
+	PlaylistID    uint `json:"playlist_id"`
+}
+
 type Settings struct {
 	SiteTitle            string           `json:"site_title"`
 	Timezone             string           `json:"timezone"`
@@ -170,6 +187,7 @@ type Settings struct {
 	Cards                CardSettings     `json:"cards"`
 	Loader               LoaderSettings   `json:"loader"`
 	Terminal             TerminalSettings `json:"terminal"`
+	Music                MusicSettings    `json:"music"`
 	GuestbookAutoPublish bool             `json:"guestbook_auto_publish"`
 	GuestbookMaxLength   int              `json:"guestbook_max_length"`
 }

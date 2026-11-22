@@ -12,6 +12,7 @@ func decodeSettings(data string) (model.Settings, error) {
 		Cards:    model.CardSettings{Profile: true, Navigation: true, Devices: true, Terminal: true, Clock: true},
 		Loader:   model.LoaderSettings{Theme: "dark"},
 		Terminal: model.TerminalSettings{FastfetchLoadingMS: 2000},
+		Music:    model.MusicSettings{LyricsEnabled: true},
 	}
 	err := json.Unmarshal([]byte(data), &settings)
 	return settings, err

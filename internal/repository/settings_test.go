@@ -29,11 +29,15 @@ func TestDecodeSettingsLegacyDataKeepsCardsEnabled(t *testing.T) {
 	if settings.Terminal.FastfetchLoadingMS != 2000 {
 		t.Fatalf("旧数据缺少 terminal 字段时应使用默认停留时长，实际为 %+v", settings.Terminal)
 	}
+	if !settings.Music.LyricsEnabled || settings.Music.PlaylistID != 0 {
+		t.Fatalf("旧数据缺少 music 字段时应默认开启歌词并自动选列表，实际为 %+v", settings.Music)
+	}
 }
 
 func TestDecodeSettingsExplicitCardsOverrideDefaults(t *testing.T) {
 	data := `{"cards":{"profile":false,"navigation":true,"devices":false,"terminal":true,"clock":false},` +
 		`"terminal":{"fastfetch_loading_ms":3500},` +
+		`"music":{"lyrics_enabled":false,"playlist_id":12},` +
 		`"loader":{"theme":"beige","sound_enabled":true,"watermark_title":"MY SPACE","badge_image":"/storage/images/badge.png"}}`
 
 	settings, err := decodeSettings(data)
@@ -50,6 +54,9 @@ func TestDecodeSettingsExplicitCardsOverrideDefaults(t *testing.T) {
 	}
 	if settings.Terminal.FastfetchLoadingMS != 3500 {
 		t.Fatalf("显式 terminal 停留时长应保留，实际为 %+v", settings.Terminal)
+	}
+	if settings.Music.LyricsEnabled || settings.Music.PlaylistID != 12 {
+		t.Fatalf("显式 music 配置应覆盖默认值，实际为 %+v", settings.Music)
 	}
 }
 

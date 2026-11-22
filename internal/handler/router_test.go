@@ -58,6 +58,7 @@ func openTestRouter(t *testing.T, cfg config.Config, db *gorm.DB) testApp {
 		service.NewContentService(repo),
 		service.NewAuthService(repo),
 		service.NewUploadService(cfg.Storage.Path, cfg.Upload.MaxImageBytes, cfg.Upload.MaxMusicBytes),
+		service.NewMusicService(repo, cfg.Storage.Path),
 	)
 	router, err := NewRouter(cfg, api)
 	if err != nil {
@@ -279,23 +280,23 @@ func TestUploadsMusicPlaylistAndRange(t *testing.T) {
 		URL string `json:"url"`
 	}](t, performUpload(t, app.router, "/api/v1/admin/uploads/music", "silence.wav", wav, cookie, http.StatusOK)).URL
 
-	track := responseData[model.MusicTrack](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/tracks", model.MusicTrack{
+	track := responseData[model.MusicTrack](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/tracks/create", model.MusicTrack{
 		Title: "Silence", Artist: "Test", Cover: imageURL, URL: musicURL, Source: "local", Sort: 1, Enabled: true,
 	}, cookie, http.StatusOK))
-	hidden := responseData[model.MusicTrack](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/tracks", model.MusicTrack{
-		Title: "Hidden", URL: "https://example.com/hidden.mp3", Source: "remote", Sort: 2, Enabled: false,
+	hidden := responseData[model.MusicTrack](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/tracks/create", model.MusicTrack{
+		Title: "Hidden", URL: musicURL, Source: "local", Sort: 2, Enabled: false,
 	}, cookie, http.StatusOK))
 	playlist := responseData[[]model.MusicTrack](t, performJSON(t, app.router, http.MethodGet, "/api/v1/music/playlist", nil, nil, http.StatusOK))
 	if len(playlist) != 1 || playlist[0].ID != track.ID {
 		t.Fatalf("播放列表包含错误曲目: %+v", playlist)
 	}
 	track.Title = "Updated silence"
-	track = responseData[model.MusicTrack](t, performJSON(t, app.router, http.MethodPut, fmt.Sprintf("/api/v1/admin/music/tracks/%d", track.ID), track, cookie, http.StatusOK))
+	track = responseData[model.MusicTrack](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/tracks/update", track, cookie, http.StatusOK))
 	playlist = responseData[[]model.MusicTrack](t, performJSON(t, app.router, http.MethodGet, "/api/v1/music/playlist", nil, nil, http.StatusOK))
 	if len(playlist) != 1 || playlist[0].Title != "Updated silence" {
 		t.Fatal("曲目修改未同步到播放列表")
 	}
-	performJSON(t, app.router, http.MethodDelete, fmt.Sprintf("/api/v1/admin/music/tracks/%d", hidden.ID), nil, cookie, http.StatusOK)
+	performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/tracks/delete", gin.H{"id": hidden.ID}, cookie, http.StatusOK)
 
 	request := httptest.NewRequest(http.MethodGet, musicURL, nil)
 	request.Header.Set("Range", "bytes=0-99")

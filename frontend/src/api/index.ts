@@ -1,5 +1,8 @@
 import { request } from './client'
-import type { Device, GuestbookEntry, NavigationItem, Profile, Settings, Track, Visitor } from '@/types'
+import type {
+  Device, GuestbookEntry, ImportResult, Lyrics, NavigationItem, NeteaseQrSession, NeteaseQrState,
+  NeteaseSearchResult, NeteaseStatus, Playback, Playlist, Profile, S3Config, S3ObjectsResult, Settings, Track, Visitor,
+} from '@/types'
 
 const json = (method: string, body?: unknown): RequestInit => ({
   method,
@@ -13,6 +16,11 @@ export const publicApi = {
   settings: () => request<Settings>('/settings'),
   guestbook: () => request<GuestbookEntry[]>('/guestbook'),
   playlist: () => request<Track[]>('/music/playlist'),
+  playlists: () => request<Playlist[]>('/music/playlists'),
+  playlistByID: (id: number) => request<Playlist>(`/music/playlists/${id}`),
+  playback: (id: number) => request<Playback>(`/music/tracks/${id}/playback`),
+  lyrics: (id: number) => request<Lyrics>(`/music/tracks/${id}/lyrics`),
+  coverUrl: (id: number) => `/api/v1/music/tracks/${id}/cover`,
   visitor: () => request<Visitor>('/visitor'),
   submitGuestbook: (body: Pick<GuestbookEntry, 'message' | 'system_name' | 'distribution' | 'browser_name' | 'browser_version'>) =>
     request<GuestbookEntry>('/guestbook', json('POST', body)),
@@ -35,12 +43,30 @@ export const adminApi = {
   setGuestbookStatus: (id: number, status: GuestbookEntry['status']) => request<GuestbookEntry>(`/admin/guestbook/${id}`, json('PATCH', { status })),
   deleteGuestbook: (id: number) => request<null>(`/admin/guestbook/${id}`, json('DELETE')),
   updateSettings: (data: Settings) => request<Settings>('/admin/settings', json('PUT', data)),
-  tracks: () => request<Track[]>('/admin/music/tracks'),
-  createTrack: (data: Omit<Track, 'id'>) => request<Track>('/admin/music/tracks', json('POST', data)),
-  updateTrack: (data: Track) => request<Track>(`/admin/music/tracks/${data.id}`, json('PUT', data)),
-  deleteTrack: (id: number) => request<null>(`/admin/music/tracks/${id}`, json('DELETE')),
+  tracks: () => request<Track[]>('/admin/music/tracks/list', json('POST')),
+  createTrack: (data: Omit<Track, 'id'>) => request<Track>('/admin/music/tracks/create', json('POST', data)),
+  updateTrack: (data: Track) => request<Track>('/admin/music/tracks/update', json('POST', data)),
+  deleteTrack: (id: number) => request<null>('/admin/music/tracks/delete', json('POST', { id })),
+  playlists: () => request<Playlist[]>('/admin/music/playlists/list', json('POST')),
+  createPlaylist: (data: Pick<Playlist, 'name' | 'sort' | 'enabled'>) => request<Playlist>('/admin/music/playlists/create', json('POST', data)),
+  updatePlaylist: (data: Pick<Playlist, 'id' | 'name' | 'sort' | 'enabled'>) => request<Playlist>('/admin/music/playlists/update', json('POST', data)),
+  deletePlaylist: (id: number) => request<null>('/admin/music/playlists/delete', json('POST', { id })),
+  setPlaylistTracks: (playlistID: number, trackIDs: number[]) => request<Playlist>('/admin/music/playlists/tracks', json('POST', { playlist_id: playlistID, track_ids: trackIDs })),
+  neteaseQrCreate: () => request<NeteaseQrSession>('/admin/music/netease/qr/create', json('POST')),
+  neteaseQrCheck: (sessionID: string) => request<NeteaseQrState>('/admin/music/netease/qr/check', json('POST', { session_id: sessionID })),
+  neteaseStatus: () => request<NeteaseStatus>('/admin/music/netease/status', json('POST')),
+  neteaseLogout: () => request<null>('/admin/music/netease/logout', json('POST')),
+  neteaseSearch: (keywords: string, page: number, pageSize = 20) => request<NeteaseSearchResult>('/admin/music/netease/search', json('POST', { keywords, page, page_size: pageSize })),
+  neteaseCreatePlaylist: (name: string, tracks: Track[]) => request<ImportResult>('/admin/music/netease/create-playlist', json('POST', { name, tracks })),
+  neteaseImportPlaylist: (input: string, name: string) => request<ImportResult>('/admin/music/netease/import-playlist', json('POST', { input, name })),
+  s3Config: () => request<S3Config>('/admin/music/s3/config/read', json('POST')),
+  saveS3Config: (data: S3Config) => request<S3Config>('/admin/music/s3/config/save', json('POST', data)),
+  testS3: () => request<{ connected: boolean }>('/admin/music/s3/test', json('POST')),
+  s3Objects: (prefix: string, continuationToken = '') => request<S3ObjectsResult>('/admin/music/s3/objects/list', json('POST', { prefix, continuation_token: continuationToken })),
+  importS3: (name: string, keys: string[]) => request<ImportResult>('/admin/music/s3/import', json('POST', { name, keys })),
   uploadImage: (file: File) => upload('/admin/uploads/image', file),
   uploadMusic: (file: File) => upload('/admin/uploads/music', file),
+  uploadLyrics: (file: File) => upload('/admin/uploads/lyrics', file),
 }
 
 async function upload(path: string, file: File): Promise<{ url: string }> {
