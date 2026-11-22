@@ -24,7 +24,7 @@
 | 前端     | Vue 3、TypeScript、Vite、Tailwind CSS、Lucide           |
 | 后端     | Go 1.27、Gin、GORM、SQLite                              |
 | 音乐来源 | 本地文件、NeteaseCloudMusicApiEnhanced、S3 兼容对象存储 |
-| 部署     | 多阶段 Docker 构建、静态编译、Distroless 非 root 运行   |
+| 部署     | 原生二进制、多阶段 Docker 构建、Distroless 非 root 运行 |
 
 ## Docker 部署（推荐）
 
@@ -90,6 +90,50 @@ docker run -d \
 自定义配置的 `server.port` 需要与端口映射对应。例如配置为 `8081`，则使用 `-p 8080:8081`。
 
 > 容器以 UID/GID `65532` 的非 root 用户运行。推荐使用上述命名卷；如果改用宿主机目录绑定挂载，需要确保该用户对目录具有读写权限。
+
+## 原生二进制部署（无 Docker）
+
+不安装 Docker 也可以部署。前端静态资源会嵌入 Go 二进制，运行时不需要 Node.js、Go、Nginx 或独立数据库服务；Go 和 Node.js 仅在构建阶段需要。
+
+以下命令适用于目标 Linux 服务器，或与目标服务器具有相同操作系统和架构的构建环境。
+
+### 1. 构建前端和二进制
+
+```bash
+npm ci --prefix frontend
+npm run build --prefix frontend
+mkdir -p web/dist
+cp -r frontend/dist/* web/dist/
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o homepage ./cmd/server
+```
+
+### 2. 准备生产配置
+
+```bash
+cp config.yaml config.prod.yaml
+mkdir -p data storage
+```
+
+按需修改 `config.prod.yaml` 中的监听地址、端口、可信代理和上传限制。仓库示例端口为 `8081`，数据库和文件分别保存在 `data/homepage.db` 与 `storage/`。
+
+### 3. 启动服务
+
+```bash
+HOMEPAGE_CONFIG=config.prod.yaml \
+HOMEPAGE_SERVER_MODE=release \
+HOMEPAGE_ADMIN_PASSWORD='replace-with-a-strong-password' \
+./homepage
+```
+
+按实际配置端口访问主页和 `/admin`。使用仓库示例端口时，健康检查命令为：
+
+```bash
+curl --fail http://localhost:8081/healthz
+```
+
+生产环境可使用 systemd、Supervisor 或 Windows 服务管理器托管二进制。托管时需要保留上述环境变量，将服务的工作目录指向配置文件所在目录，并确保运行用户对数据库和存储目录具有读写权限。
+
+构建完成后，部署到同架构服务器时只需复制二进制和生产配置；`data/`、`storage/` 应在服务器上创建并持久化。前端已经嵌入二进制，无需另外部署静态网站。
 
 ## 配置说明
 
