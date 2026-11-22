@@ -149,6 +149,8 @@ type CardSettings struct {
 }
 
 type LoaderSettings struct {
+	Theme             string `json:"theme"`
+	SoundEnabled      bool   `json:"sound_enabled"`
 	WatermarkTitle    string `json:"watermark_title"`
 	WatermarkSubtitle string `json:"watermark_subtitle"`
 	WatermarkCaption  string `json:"watermark_caption"`

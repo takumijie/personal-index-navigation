@@ -38,6 +38,7 @@ func Seed(db *gorm.DB, cfg config.Config) error {
 			DayStart: "06:00", NightStart: "18:00", Timezone: "Asia/Shanghai", DurationMS: 1000,
 		},
 		Cards:                model.CardSettings{Profile: true, Navigation: true, Devices: true, Terminal: true, Clock: true},
+		Loader:               model.LoaderSettings{Theme: "dark", SoundEnabled: false},
 		GuestbookAutoPublish: false,
 		GuestbookMaxLength:   500,
 	}

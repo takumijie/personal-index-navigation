@@ -7,9 +7,10 @@ import (
 )
 
 func decodeSettings(data string) (model.Settings, error) {
-	// 旧数据没有 cards 字段，预填全开避免 bool 零值隐藏所有卡片
+	// 旧数据缺少新增字段时预填默认值，避免卡片被隐藏或加载页主题为空
 	settings := model.Settings{
-		Cards: model.CardSettings{Profile: true, Navigation: true, Devices: true, Terminal: true, Clock: true},
+		Cards:  model.CardSettings{Profile: true, Navigation: true, Devices: true, Terminal: true, Clock: true},
+		Loader: model.LoaderSettings{Theme: "dark"},
 	}
 	err := json.Unmarshal([]byte(data), &settings)
 	return settings, err

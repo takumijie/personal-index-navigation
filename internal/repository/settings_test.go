@@ -23,14 +23,14 @@ func TestDecodeSettingsLegacyDataKeepsCardsEnabled(t *testing.T) {
 	if settings.SiteTitle != "个人主页" || settings.Background.DayStart != "06:00" {
 		t.Fatalf("旧字段解析不正确: %+v", settings)
 	}
-	if settings.Loader != (model.LoaderSettings{}) {
-		t.Fatalf("旧数据缺少 loader 字段时应为零值，实际为 %+v", settings.Loader)
+	if settings.Loader != (model.LoaderSettings{Theme: "dark"}) {
+		t.Fatalf("旧数据缺少 loader 字段时应使用默认主题且关闭音效，实际为 %+v", settings.Loader)
 	}
 }
 
 func TestDecodeSettingsExplicitCardsOverrideDefaults(t *testing.T) {
 	data := `{"cards":{"profile":false,"navigation":true,"devices":false,"terminal":true,"clock":false},` +
-		`"loader":{"watermark_title":"MY SPACE","badge_image":"/storage/images/badge.png"}}`
+		`"loader":{"theme":"beige","sound_enabled":true,"watermark_title":"MY SPACE","badge_image":"/storage/images/badge.png"}}`
 
 	settings, err := decodeSettings(data)
 	if err != nil {
@@ -40,7 +40,8 @@ func TestDecodeSettingsExplicitCardsOverrideDefaults(t *testing.T) {
 	if cards.Profile || !cards.Navigation || cards.Devices || !cards.Terminal || cards.Clock {
 		t.Fatalf("显式 cards 配置应覆盖默认值，实际为 %+v", cards)
 	}
-	if settings.Loader.WatermarkTitle != "MY SPACE" || settings.Loader.BadgeImage != "/storage/images/badge.png" {
+	if settings.Loader.Theme != "beige" || !settings.Loader.SoundEnabled ||
+		settings.Loader.WatermarkTitle != "MY SPACE" || settings.Loader.BadgeImage != "/storage/images/badge.png" {
 		t.Fatalf("loader 字段解析不正确: %+v", settings.Loader)
 	}
 }
@@ -56,5 +57,18 @@ func TestDecodeSettingsPartialCardsKeepsRemainingEnabled(t *testing.T) {
 	}
 	if !cards.Profile || !cards.Navigation || !cards.Devices || !cards.Clock {
 		t.Fatalf("未指定的卡片应保持默认开启，实际为 %+v", cards)
+	}
+}
+
+func TestDecodeSettingsPartialLoaderKeepsDefaults(t *testing.T) {
+	settings, err := decodeSettings(`{"loader":{"watermark_title":"MY SPACE"}}`)
+	if err != nil {
+		t.Fatalf("decodeSettings 返回错误: %v", err)
+	}
+	if settings.Loader.Theme != "dark" || settings.Loader.SoundEnabled {
+		t.Fatalf("部分 loader 数据应保持主题和音效默认值，实际为 %+v", settings.Loader)
+	}
+	if settings.Loader.WatermarkTitle != "MY SPACE" {
+		t.Fatalf("已有 loader 字段不应被默认值覆盖，实际为 %+v", settings.Loader)
 	}
 }

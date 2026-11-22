@@ -155,6 +155,9 @@ func validateSettings(settings model.Settings) error {
 	if settings.Background.DurationMS < 0 || settings.Background.DurationMS > 60000 {
 		return invalid("背景切换时长无效")
 	}
+	if !oneOf(settings.Loader.Theme, "dark", "beige") {
+		return invalid("加载页主题无效")
+	}
 	if !validLength(settings.Loader.WatermarkTitle, 60) || !plainText(settings.Loader.WatermarkTitle, false) ||
 		!validLength(settings.Loader.WatermarkSubtitle, 80) || !plainText(settings.Loader.WatermarkSubtitle, false) ||
 		!validLength(settings.Loader.WatermarkCaption, 120) || !plainText(settings.Loader.WatermarkCaption, false) {

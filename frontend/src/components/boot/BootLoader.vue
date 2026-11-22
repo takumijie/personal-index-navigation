@@ -29,10 +29,16 @@ class SpaceAudioSynth {
     if (this.ctx?.state === 'suspended') void this.ctx.resume()
   }
 
-  toggle() {
+  unlock() {
     this.init()
+  }
+
+  toggle() {
     this.enabled = !this.enabled
-    if (this.enabled) this.playChime()
+    if (this.enabled) {
+      this.init()
+      this.playChime()
+    }
     return this.enabled
   }
 
@@ -81,7 +87,28 @@ class SpaceAudioSynth {
 }
 const synth = new SpaceAudioSynth()
 const soundEnabled = ref(false)
+let soundTouched = false
+
+watch(() => props.loader.sound_enabled, (enabled) => {
+  if (soundTouched) return
+  soundEnabled.value = enabled
+  synth.enabled = enabled
+}, { immediate: true })
+
+function removeAudioUnlockListeners() {
+  window.removeEventListener('pointerdown', unlockAudio)
+  window.removeEventListener('keydown', unlockAudio)
+}
+
+function unlockAudio() {
+  if (!soundEnabled.value) return
+  synth.unlock()
+  removeAudioUnlockListeners()
+}
+
 function toggleSound() {
+  soundTouched = true
+  removeAudioUnlockListeners()
   soundEnabled.value = synth.toggle()
 }
 
@@ -90,7 +117,7 @@ const badgeMode = ref<'builtin' | 'halftone' | 'original'>('builtin')
 const halftoneHost = ref<HTMLElement | null>(null)
 let badgeRunId = 0
 
-watch(() => props.loader.badge_image, (url) => {
+watch([() => props.loader.badge_image, () => props.loader.theme], ([url, theme]) => {
   const runId = ++badgeRunId
   badgeMode.value = 'builtin'
   if (!url) return
@@ -99,7 +126,11 @@ watch(() => props.loader.badge_image, (url) => {
   image.onload = () => {
     if (runId !== badgeRunId) return
     try {
-      const canvas = imageToHalftone(image, { maxWidth: 150, cellSize: 4 })
+      const canvas = imageToHalftone(image, {
+        maxWidth: 150,
+        cellSize: 4,
+        color: theme === 'beige' ? '#3b3830' : '#e6e3d3',
+      })
       canvas.style.width = '120px'
       canvas.style.height = 'auto'
       badgeMode.value = 'halftone'
@@ -256,6 +287,8 @@ onMounted(() => {
     emit('finish')
     return
   }
+  window.addEventListener('pointerdown', unlockAudio)
+  window.addEventListener('keydown', unlockAudio)
   clockTimer = setInterval(() => {
     const now = new Date()
     const pad = (n: number, len = 2) => String(n).padStart(len, '0')
@@ -270,12 +303,13 @@ onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer)
   scrambleFrames.forEach((id) => cancelAnimationFrame(id))
   scrambleFrames.clear()
+  removeAudioUnlockListeners()
   synth.dispose()
 })
 </script>
 
 <template>
-  <div class="boot-root yorha-grid-bg fixed inset-0 z-50 antialiased" :class="{ 'boot-leaving': leaving }">
+  <div class="boot-root yorha-grid-bg fixed inset-0 z-50 antialiased" :class="{ 'boot-leaving': leaving, 'theme-beige': loader.theme === 'beige' }">
     <div class="crt-scanlines pointer-events-none fixed inset-0 z-40" />
     <div class="crt-vignette pointer-events-none fixed inset-0 z-40" />
 
@@ -359,10 +393,27 @@ onBeforeUnmount(() => {
   --boot-border: rgba(218, 212, 187, 0.28);
   --boot-grid: rgba(255, 255, 255, 0.026);
   --boot-glow: 0 0 8px rgba(230, 227, 211, 0.22);
+  --boot-watermark-opacity: 0.08;
   background-color: var(--boot-bg);
   color: var(--boot-text);
   font-family: 'Noto Sans SC', 'Share Tech Mono', monospace;
   transition: opacity 0.65s ease, transform 0.65s ease;
+}
+.boot-root.theme-beige {
+  --boot-bg: #dad4bb;
+  --boot-text: #3b3830;
+  --boot-muted: #6e695a;
+  --boot-accent-dim: rgba(59, 56, 48, 0.1);
+  --boot-border: rgba(59, 56, 48, 0.35);
+  --boot-grid: rgba(59, 56, 48, 0.05);
+  --boot-glow: none;
+  --boot-watermark-opacity: 0.065;
+}
+.boot-root.theme-beige .crt-vignette {
+  background: radial-gradient(circle at center, transparent 64%, rgba(59, 56, 48, 0.22) 100%);
+}
+.boot-root.theme-beige .chromatic-ghost {
+  text-shadow: 0.8px 0.8px 0 rgba(59, 56, 48, 0.12);
 }
 .boot-root.boot-leaving {
   opacity: 0;
@@ -394,14 +445,15 @@ onBeforeUnmount(() => {
     var(--boot-glow);
 }
 @keyframes watermarkPulse {
-  0%, 100% { opacity: 0.08; transform: translate(-50%, -50%) scale(1); }
-  50% { opacity: 0.108; transform: translate(-50%, -50%) scale(1.01); }
+  0%, 100% { opacity: var(--boot-watermark-opacity); transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: calc(var(--boot-watermark-opacity) * 1.35); transform: translate(-50%, -50%) scale(1.01); }
 }
 .space-watermark {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  opacity: var(--boot-watermark-opacity);
   animation: watermarkPulse 6.5s ease-in-out infinite;
   pointer-events: none;
   z-index: 1;
