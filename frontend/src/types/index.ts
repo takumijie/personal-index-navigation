@@ -64,12 +64,21 @@ export interface MusicSettings {
   playlist_id: number
 }
 
+export type HomeButtonTheme = 'classic' | 'glass' | 'terminal' | 'aurora' | 'image'
+
+export interface HomeButtonSettings {
+  theme: HomeButtonTheme
+  image_url: string
+}
+
 export interface Settings {
   version: number
   site_title: string
+  favicon_url: string
   timezone: string
   time_format: '12' | '24'
   clock_label: string
+  home_button: HomeButtonSettings
   background: BackgroundSettings
   cards: CardSettings
   loader: LoaderSettings

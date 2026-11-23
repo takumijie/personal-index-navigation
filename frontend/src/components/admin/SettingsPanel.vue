@@ -8,6 +8,7 @@ import type { Settings } from '@/types'
 import { validClockTime, validTimezone, validWebUrl } from '@/utils/validation'
 import AlertMessage from '@/components/common/AlertMessage.vue'
 import FormField from '@/components/common/FormField.vue'
+import HomeBrandLink from '@/components/common/HomeBrandLink.vue'
 import ImageUploadField from '@/components/common/ImageUploadField.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import PanelShell from '@/components/common/PanelShell.vue'
@@ -28,6 +29,9 @@ onMounted(async () => {
 function validate() {
   const errors: Record<string, string> = {}
   if (!form.value.site_title.trim()) errors.site_title = '请输入站点标题'
+  if (!validWebUrl(form.value.favicon_url, true)) errors.favicon_url = '请输入有效的网站图标地址'
+  if (form.value.home_button.theme === 'image' && !form.value.home_button.image_url.trim()) errors.home_image_url = '图片徽标主题需要配置图片'
+  else if (!validWebUrl(form.value.home_button.image_url, true)) errors.home_image_url = '请输入有效的主页按钮图片地址'
   if (!validTimezone(form.value.timezone)) errors.timezone = '请输入有效的 IANA 时区'
   if (!validTimezone(form.value.background.timezone)) errors.background_timezone = '请输入有效的 IANA 时区'
   if (!validClockTime(form.value.background.day_start)) errors.day_start = '时间格式应为 HH:mm'
@@ -108,7 +112,40 @@ function loadLatest() {
             <FormField label="时钟标签"><input v-model="form.clock_label" class="field" maxlength="100" placeholder="SHANGHAI · UTC+8" /></FormField>
             <FormField label="时钟时区" :error="fieldErrors.timezone" hint="IANA 时区"><input v-model="form.timezone" class="field" placeholder="Asia/Shanghai" /></FormField>
             <FormField label="时间格式"><select v-model="form.time_format" class="field"><option value="24">24 小时制</option><option value="12">12 小时制</option></select></FormField>
+            <div class="min-[760px]:col-span-2" data-testid="favicon-field">
+              <ImageUploadField v-model="form.favicon_url" label="网站图标（可选）" />
+              <p class="mt-2 text-[11px] text-white/35">支持 PNG、JPG、WebP、GIF、ICO，推荐正方形图片；留空使用默认菱形图标。</p>
+              <p v-if="fieldErrors.favicon_url" class="mt-2 text-xs text-rose-300">{{ fieldErrors.favicon_url }}</p>
+            </div>
           </div>
+        </section>
+
+        <section data-testid="home-button-settings">
+          <h3 class="mb-4 text-xs font-semibold tracking-wider text-violet-200/65">主页按钮</h3>
+          <div class="grid items-start gap-5 min-[760px]:grid-cols-2">
+            <div>
+              <FormField label="按钮主题">
+                <select v-model="form.home_button.theme" class="field" data-testid="home-button-theme">
+                  <option value="classic">经典菱形</option>
+                  <option value="glass">玻璃主页</option>
+                  <option value="terminal">终端路径</option>
+                  <option value="aurora">极光渐变</option>
+                  <option value="image">图片徽标</option>
+                </select>
+              </FormField>
+              <div v-if="form.home_button.theme === 'image'" class="mt-5" data-testid="home-button-image">
+                <ImageUploadField v-model="form.home_button.image_url" label="徽标图片" required />
+                <p v-if="fieldErrors.home_image_url" class="mt-2 text-xs text-rose-300">{{ fieldErrors.home_image_url }}</p>
+              </div>
+            </div>
+            <div>
+              <p class="mb-2 text-xs text-white/50">实时预览</p>
+              <div class="rounded-xl border border-white/[0.07] bg-black/20 p-4" data-testid="home-button-preview">
+                <HomeBrandLink :title="form.site_title" :home-button="form.home_button" />
+              </div>
+            </div>
+          </div>
+          <p class="mt-3 text-[11px] text-white/35">所有主题均保留返回主页行为；图片加载失败时自动使用经典菱形。</p>
         </section>
 
         <section>

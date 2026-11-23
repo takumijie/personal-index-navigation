@@ -18,7 +18,7 @@ async function upload(event: Event) {
   const file = inputElement.files?.[0]
   if (!file) return
   error.value = ''
-  if (!file.type.startsWith('image/')) {
+  if (!file.type.startsWith('image/') && !file.name.toLowerCase().endsWith('.ico')) {
     error.value = '请选择图片文件'
     inputElement.value = ''
     return
@@ -49,7 +49,7 @@ async function upload(event: Event) {
         <img v-else :src="model" alt="图片预览" class="size-full object-cover" />
       </div>
       <input v-model="model" class="field" type="text" :required="required" placeholder="https://… 或 /uploads/…" />
-      <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="upload" />
+      <input ref="fileInput" type="file" accept="image/*,.ico" class="hidden" @change="upload" />
       <button class="secondary-button shrink-0 px-3" type="button" :disabled="uploading" :title="`上传${label}`" @click="fileInput?.click()">
         <LoaderCircle v-if="uploading" :size="15" class="animate-spin" /><ImagePlus v-else :size="15" />
         <span class="hidden min-[640px]:inline">{{ uploading ? '上传中' : '上传' }}</span>
