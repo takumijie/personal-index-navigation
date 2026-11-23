@@ -2,6 +2,7 @@ import { computed, nextTick, onBeforeUnmount, ref, type Ref } from 'vue'
 import { publicApi } from '@/api'
 import { errorMessage } from '@/api/client'
 import { createFastfetchData, type FastfetchData } from '@/components/terminal/fastfetch'
+import { isShellCommand } from '@/utils/commandRecognition'
 import { detectSystem } from '@/utils/system'
 import type { GuestbookEntry, Settings, SystemInfo, Visitor } from '@/types'
 
@@ -154,7 +155,7 @@ export function useTerminal({ entries, settings, visitor, terminalError, ensureD
         append('  date       Current local date and time')
         append('  uname      Detected operating system')
         append('  clear      Clear terminal output')
-        append('Anything else is submitted to the guestbook.', 'muted')
+        append('Plain text is submitted to the guestbook; shell commands are not executed.', 'muted')
         return true
       case 'fastfetch':
         appendFastfetch(createFastfetchData(system.value, visitor.value || undefined))
@@ -196,6 +197,11 @@ export function useTerminal({ entries, settings, visitor, terminalError, ensureD
       input.value = ''
       return
     }
+    if (isShellCommand(message)) {
+      append('Permission denied', 'error')
+      input.value = ''
+      return
+    }
     const maxLength = settings.value.guestbook_max_length
     if (message.length > maxLength) {
       append(`Message is too long (${message.length}/${maxLength}). Your input has been kept.`, 'error')
@@ -205,7 +211,7 @@ export function useTerminal({ entries, settings, visitor, terminalError, ensureD
     try {
       const saved = await publicApi.submitGuestbook({
         message,
-        system_name: system.value.distributionKey,
+        system_name: system.value.distributionKey === 'android' ? system.value.os : system.value.distributionKey,
         distribution: system.value.distribution,
         browser_name: system.value.browserName,
         browser_version: system.value.browserVersion,
