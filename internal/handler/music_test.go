@@ -3,12 +3,60 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"homepage/internal/model"
 
 	"github.com/gin-gonic/gin"
 )
+
+func TestPublicPlaylistAllowsEmptyAndPreservesDatabaseErrors(t *testing.T) {
+	app := newTestApp(t)
+	assertEmpty := func() {
+		t.Helper()
+		response := performJSON(t, app.router, http.MethodGet, "/api/v1/music/playlist", nil, nil, http.StatusOK)
+		tracks := responseData[[]model.MusicTrack](t, response)
+		if tracks == nil || len(tracks) != 0 {
+			t.Fatalf("空播放列表应返回非 null 空数组: %s", response.Body.String())
+		}
+	}
+
+	assertEmpty()
+	if err := app.db.Exec("UPDATE playlists SET enabled = ?", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertEmpty()
+	if err := app.db.Exec("DELETE FROM playlists").Error; err != nil {
+		t.Fatal(err)
+	}
+	assertEmpty()
+
+	sqlDB, err := app.db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	performJSON(t, app.router, http.MethodGet, "/api/v1/music/playlist", nil, nil, http.StatusInternalServerError)
+}
+
+func TestPublicPlaybackRateLimitIncludesMissingTracks(t *testing.T) {
+	app := newTestApp(t)
+	for range 120 {
+		performJSON(t, app.router, http.MethodGet, "/api/v1/music/tracks/999999/playback", nil, nil, http.StatusNotFound)
+	}
+	performJSON(t, app.router, http.MethodGet, "/api/v1/music/tracks/999999/playback", nil, nil, http.StatusTooManyRequests)
+	performJSON(t, app.router, http.MethodGet, "/api/v1/music/tracks/999999/lyrics", nil, nil, http.StatusNotFound)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/music/tracks/999999/playback", nil)
+	request.RemoteAddr = "192.0.2.20:1234"
+	response := httptest.NewRecorder()
+	app.router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("其他 IP 不应受到限流影响: %d %s", response.Code, response.Body.String())
+	}
+}
 
 func TestMusicPlaylistsPostSecurityAndLyrics(t *testing.T) {
 	app := newTestApp(t)

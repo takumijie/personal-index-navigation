@@ -30,7 +30,40 @@ func TestIPRateLimiterCleansExpiredEntries(t *testing.T) {
 
 func TestIPRateLimiterStillLimitsRecentRequests(t *testing.T) {
 	limiter := NewIPRateLimiter(2, time.Minute)
-	if !limiter.Allow("ip") || !limiter.Allow("ip") || limiter.Allow("ip") {
-		t.Fatal("限流器未按窗口内请求次数限制 IP")
+	if !limiter.Allow("ip") {
+		t.Fatal("第一次请求应被允许")
+	}
+	if !limiter.Allow("ip") {
+		t.Fatal("第二次请求应被允许")
+	}
+	if limiter.Allow("ip") {
+		t.Fatal("超过窗口额度的请求应被限制")
+	}
+	if !limiter.Allow("other-ip") {
+		t.Fatal("其他 IP 不应受到影响")
+	}
+}
+
+func TestPublicMusicRateLimitsAreIndependent(t *testing.T) {
+	music := NewMusicService(nil, "")
+	for range 120 {
+		if !music.AllowPlayback("public-ip") {
+			t.Fatal("播放额度内请求不应被限制")
+		}
+	}
+	if music.AllowPlayback("public-ip") {
+		t.Fatal("播放请求超过额度后应被限制")
+	}
+	if !music.Allow("public-ip") {
+		t.Fatal("后台 Provider 额度不应被公开播放请求消耗")
+	}
+	if !music.AllowLyrics("public-ip") {
+		t.Fatal("歌词额度不应被播放请求消耗")
+	}
+	if !music.AllowCover("public-ip") {
+		t.Fatal("封面额度不应被播放请求消耗")
+	}
+	if !music.AllowPlayback("other-ip") {
+		t.Fatal("其他 IP 的播放额度不应受到影响")
 	}
 }

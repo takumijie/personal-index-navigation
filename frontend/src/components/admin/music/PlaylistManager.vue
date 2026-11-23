@@ -57,7 +57,9 @@ async function savePlaybackSettings() {
   error.value = ''
   success.value = ''
   try {
-    settings.value = await adminApi.updateSettings(settings.value)
+    const music = { ...settings.value.music }
+    const latest = await publicApi.settings()
+    settings.value = await adminApi.updateSettings({ ...latest, music })
     success.value = '前台播放设置已保存'
   } catch (reason) {
     error.value = errorMessage(reason)

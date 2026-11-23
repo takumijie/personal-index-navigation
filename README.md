@@ -49,6 +49,7 @@ docker run -d \
   --restart unless-stopped \
   -p 8080:8080 \
   -e HOMEPAGE_ADMIN_PASSWORD='replace-with-a-strong-password' \
+  -e HOMEPAGE_SERVER_COOKIE_SECURE=false \
   -v homepage-data:/data \
   -v homepage-storage:/storage \
   personal-index-navigation:latest
@@ -60,7 +61,7 @@ docker run -d \
 - 管理后台：`http://localhost:8080/admin`
 - 健康检查：`http://localhost:8080/healthz`
 
-默认管理员用户名为 `admin`，密码为 `HOMEPAGE_ADMIN_PASSWORD` 的值。镜像默认使用 `release` 模式，**不能使用开发默认密码 `admin123`**。
+默认管理员用户名为 `admin`，密码为 `HOMEPAGE_ADMIN_PASSWORD` 的值。镜像默认使用 `release` 模式并监听 `0.0.0.0`，所有模式都禁止使用 `admin123`。上面的 `cookie_secure=false` 仅用于直接 HTTP 本地验证；经 Nginx 等反向代理提供 HTTPS 时，应删除该变量或显式设为 `true`，并按实际代理地址配置 `server.trusted_proxies`。
 
 ### 3. 检查运行状态
 
@@ -81,6 +82,7 @@ docker run -d \
   -p 8080:8080 \
   -e HOMEPAGE_CONFIG=/config.yaml \
   -e HOMEPAGE_ADMIN_PASSWORD='replace-with-a-strong-password' \
+  -e HOMEPAGE_SERVER_COOKIE_SECURE=true \
   -v "$PWD/config.prod.yaml:/config.yaml:ro" \
   -v homepage-data:/data \
   -v homepage-storage:/storage \
@@ -121,6 +123,7 @@ mkdir -p data storage
 ```bash
 HOMEPAGE_CONFIG=config.prod.yaml \
 HOMEPAGE_SERVER_MODE=release \
+HOMEPAGE_SERVER_COOKIE_SECURE=true \
 HOMEPAGE_ADMIN_PASSWORD='replace-with-a-strong-password' \
 ./homepage
 ```
@@ -148,10 +151,11 @@ curl --fail http://localhost:8081/healthz
 
 ```yaml
 server:
-  listen: "0.0.0.0"
+  listen: "127.0.0.1"
   port: 8081
   mode: debug
   trusted_proxies: []
+  cookie_secure: false
 
 database:
   path: data/homepage.db
@@ -161,7 +165,7 @@ storage:
 
 admin:
   username: admin
-  password: "change-this-password"
+  password: ""
 
 upload:
   max_image_bytes: 10485760
@@ -170,18 +174,21 @@ upload:
 
 | 配置项                     | 说明                                                                  |
 | -------------------------- | --------------------------------------------------------------------- |
-| `server.listen`          | HTTP 监听地址，通常为 `0.0.0.0`。                                   |
+| `server.listen`          | HTTP 监听地址，内置默认 `127.0.0.1`；Docker 显式覆盖为 `0.0.0.0`。 |
 | `server.port`            | HTTP 端口。仓库配置为 `8081`；Docker 未挂载配置时为 `8080`。      |
-| `server.mode`            | 支持 `debug`、`release`、`test`，生产环境使用 `release`。     |
+| `server.mode`            | 支持 `debug`、`release`、`test`，内置默认 `release`。          |
 | `server.trusted_proxies` | 可信反向代理 IP 或 CIDR 列表。只有可信代理的转发头才用于解析访客 IP。 |
+| `server.cookie_secure`   | 会话 Cookie 的 Secure 属性；release 默认 true，debug/test 默认 false。 |
 | `database.path`          | SQLite 数据库文件路径。                                               |
 | `storage.path`           | 图片、音乐、歌词和封面缓存等文件的存储根目录。                        |
 | `admin.username`         | 管理员用户名，默认为 `admin`。                                      |
-| `admin.password`         | 管理员密码，至少 8 位；生产环境必须修改开发默认密码。                 |
+| `admin.password`         | 管理员密码，至少 8 位；无内置可用密码，推荐使用环境变量提供。         |
 | `upload.max_image_bytes` | 单张图片上传大小上限，默认 10 MiB。                                   |
 | `upload.max_music_bytes` | 单个音乐文件上传大小上限，默认 50 MiB。                               |
 
 服务启动时会根据启动配置创建或更新管理员账号，因此修改管理员用户名或密码后需要重启服务。
+
+SQLite 使用 WAL 模式，数据库、`-wal` 和 `-shm` 文件应按 0600 权限保护，备份文件也应采用相同的访问控制。运行中备份请使用 SQLite 在线备份 API 或 `VACUUM INTO`，不要只复制正在写入的单个 DB 文件而遗漏 WAL 内容。
 
 ### 环境变量
 
@@ -191,11 +198,16 @@ upload:
 | --------------------------- | ----------------------------------------------------------- |
 | `HOMEPAGE_CONFIG`         | YAML 配置文件路径，默认 `config.yaml`。                   |
 | `HOMEPAGE_SERVER_MODE`    | 覆盖 `server.mode`；Docker 镜像默认设为 `release`。     |
+| `HOMEPAGE_SERVER_LISTEN`  | 覆盖 `server.listen`；Docker 镜像默认设为 `0.0.0.0`。 |
+| `HOMEPAGE_SERVER_PORT`    | 覆盖 `server.port`，范围为 1～65535。                    |
+| `HOMEPAGE_SERVER_COOKIE_SECURE` | 显式覆盖 Cookie Secure；仅受控 HTTP 调试可设为 false。 |
 | `HOMEPAGE_DATABASE_PATH`  | 覆盖数据库路径；Docker 镜像默认设为 `/data/homepage.db`。 |
 | `HOMEPAGE_STORAGE_PATH`   | 覆盖存储路径；Docker 镜像默认设为 `/storage`。            |
 | `HOMEPAGE_ADMIN_PASSWORD` | 覆盖管理员密码，推荐在生产环境使用。                        |
 
-目前监听地址、端口、管理员用户名和可信代理等配置通过 YAML 设置。
+管理员用户名和可信代理通过 YAML 设置。显式设置 `HOMEPAGE_CONFIG` 后，文件缺失、不可读或解析失败都会阻止启动，不会静默回退到默认配置。可将 `config.yaml` 复制为已忽略的 `config.local.yaml` 保存本地私有配置。
+
+直接 HTTP 本地运行使用 `cookie_secure: false`；生产环境应由 Nginx 等反代提供 HTTPS，并保持 release 默认的 Secure Cookie。服务不会根据客户端提交的 `X-Forwarded-Proto` 自动改变该安全属性。
 
 ### 后台业务配置
 
@@ -265,6 +277,7 @@ Secret 等敏感配置保存在 SQLite 中。请保护数据库备份，并遵�
 首次克隆且 `web/dist` 不存在时，请先完成下方“构建前端并运行完整站点”中的依赖安装、前端构建和资源同步，再启动后端。
 
 ```powershell
+$env:HOMEPAGE_ADMIN_PASSWORD='replace-with-a-local-strong-password'
 go run ./cmd/server
 ```
 

@@ -30,6 +30,8 @@ export function isDaytime(date: Date, settings: Settings['background']): boolean
 export function useBackground(settings: Ref<Settings>) {
   const now = ref(new Date())
   const loaded = ref(new Set<string>())
+  const failed = ref(new Set<string>())
+  const pending = new Set<string>()
   const reducedMotion = ref(false)
   let timer: ReturnType<typeof setTimeout> | undefined
   let motionQuery: MediaQueryList | undefined
@@ -41,29 +43,52 @@ export function useBackground(settings: Ref<Settings>) {
   const duration = computed(() => reducedMotion.value ? 0 : Math.max(0, settings.value.background.duration_ms))
 
   function markLoaded(url: string) {
+    pending.delete(url)
     // 替换 Set 以触发依赖更新（BackgroundScene 与加载页就绪判断均依赖它）
     const next = new Set(loaded.value)
     next.add(url)
     loaded.value = next
+    const nextFailed = new Set(failed.value)
+    nextFailed.delete(url)
+    failed.value = nextFailed
+  }
+
+  function markFailed(url: string) {
+    pending.delete(url)
+    const nextLoaded = new Set(loaded.value)
+    nextLoaded.delete(url)
+    loaded.value = nextLoaded
+    const next = new Set(failed.value)
+    next.add(url)
+    failed.value = next
   }
 
   function preload(url: string) {
-    if (!url || loaded.value.has(url)) return
+    if (!url || loaded.value.has(url) || failed.value.has(url) || pending.has(url)) return
+    pending.add(url)
     if (isVideoUrl(url)) {
       const video = document.createElement('video')
+      const release = () => {
+        video.removeAttribute('src')
+        video.load()
+      }
       video.preload = 'auto'
       video.muted = true
       video.addEventListener('canplay', () => {
         markLoaded(url)
         // 释放预载元素，实际播放由 BackgroundScene 的 video 元素负责
-        video.removeAttribute('src')
-        video.load()
+        release()
+      }, { once: true })
+      video.addEventListener('error', () => {
+        markFailed(url)
+        release()
       }, { once: true })
       video.src = url
       return
     }
     const image = new Image()
     image.onload = () => markLoaded(url)
+    image.onerror = () => markFailed(url)
     image.src = url
   }
 
@@ -90,5 +115,5 @@ export function useBackground(settings: Ref<Settings>) {
     if (timer) clearTimeout(timer)
     if (updateMotion) motionQuery?.removeEventListener('change', updateMotion)
   })
-  return { mode, isDay, activeUrl, loaded, duration, preload, reducedMotion }
+  return { mode, isDay, activeUrl, loaded, failed, duration, preload, reducedMotion }
 }

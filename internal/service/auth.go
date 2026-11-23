@@ -20,8 +20,8 @@ import (
 const SessionDuration = 24 * time.Hour
 
 type AuthService struct {
-	repo     *repository.Repository
-	limiter  *IPRateLimiter
+	repo      *repository.Repository
+	limiter   *IPRateLimiter
 	dummyHash []byte
 }
 

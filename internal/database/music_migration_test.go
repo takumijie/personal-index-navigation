@@ -1,11 +1,46 @@
 package database
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"homepage/internal/model"
 )
+
+func TestOpenEnablesWALAndSecuresDatabaseFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secure.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	var journalMode string
+	if err := db.Raw("PRAGMA journal_mode").Row().Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Fatalf("journal_mode = %q，预期 wal", journalMode)
+	}
+	for _, name := range []string{path, path + "-wal", path + "-shm"} {
+		info, err := os.Stat(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+			t.Errorf("%s 权限为 %o，预期 600", name, info.Mode().Perm())
+		}
+	}
+}
 
 func TestMusicSourceMigrationPreservesTracks(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "legacy.db"))

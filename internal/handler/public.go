@@ -11,20 +11,17 @@ import (
 )
 
 type API struct {
-	content *service.ContentService
-	auth    *service.AuthService
-	uploads *service.UploadService
-	music   *service.MusicService
-	netease *service.NeteaseService
-	s3      *service.S3Service
+	content      *service.ContentService
+	auth         *service.AuthService
+	uploads      *service.UploadService
+	music        *service.MusicService
+	netease      *service.NeteaseService
+	s3           *service.S3Service
+	cookieSecure bool
 }
 
-func NewAPI(content *service.ContentService, auth *service.AuthService, uploads *service.UploadService, music ...*service.MusicService) *API {
-	api := &API{content: content, auth: auth, uploads: uploads}
-	if len(music) > 0 {
-		api.music = music[0]
-	}
-	return api
+func NewAPI(content *service.ContentService, auth *service.AuthService, uploads *service.UploadService, music *service.MusicService) *API {
+	return &API{content: content, auth: auth, uploads: uploads, music: music}
 }
 
 func (a *API) SetMusicProviders(netease *service.NeteaseService, s3 *service.S3Service) {

@@ -37,9 +37,9 @@ function validate() {
   if (form.value.loader.watermark_subtitle.length > 80) errors.watermark_subtitle = '水印副标题不能超过 80 字符'
   if (form.value.loader.watermark_caption.length > 120) errors.watermark_caption = '水印小字不能超过 120 字符'
   if (form.value.loader.badge_image && !validWebUrl(form.value.loader.badge_image) && !form.value.loader.badge_image.startsWith('/')) errors.badge_image = '请输入有效的徽章图片地址'
-  if (form.value.background.duration_ms < 0 || form.value.background.duration_ms > 10000) errors.duration_ms = '过渡时长应在 0–10000 毫秒之间'
+  if (form.value.background.duration_ms < 0 || form.value.background.duration_ms > 60000) errors.duration_ms = '过渡时长应在 0–60000 毫秒之间'
   if (form.value.terminal.fastfetch_loading_ms < 0 || form.value.terminal.fastfetch_loading_ms > 10000) errors.fastfetch_loading_ms = 'Fastfetch 停留时长应在 0–10000 毫秒之间'
-  if (form.value.guestbook_max_length < 1 || form.value.guestbook_max_length > 2000) errors.guestbook_max_length = '留言长度应在 1–2000 之间'
+  if (form.value.guestbook_max_length < 1 || form.value.guestbook_max_length > 10000) errors.guestbook_max_length = '留言长度应在 1–10000 之间'
   fieldErrors.value = errors
   return !Object.keys(errors).length
 }
@@ -50,7 +50,8 @@ async function save() {
   if (!validate()) return
   saving.value = true
   try {
-    form.value = await adminApi.updateSettings(form.value)
+    const latest = await publicApi.settings()
+    form.value = await adminApi.updateSettings({ ...form.value, music: latest.music })
     success.value = '站点设置已保存，主页将在下次加载时应用'
   } catch (reason) { error.value = errorMessage(reason) } finally { saving.value = false }
 }
@@ -66,8 +67,8 @@ async function save() {
         <section>
           <h3 class="mb-4 text-xs font-semibold tracking-wider text-violet-200/65">基础与时钟</h3>
           <div class="grid gap-5 min-[760px]:grid-cols-2">
-            <FormField label="站点标题" :error="fieldErrors.site_title"><input v-model="form.site_title" class="field" maxlength="80" /></FormField>
-            <FormField label="时钟标签"><input v-model="form.clock_label" class="field" maxlength="50" placeholder="SHANGHAI · UTC+8" /></FormField>
+            <FormField label="站点标题" :error="fieldErrors.site_title"><input v-model="form.site_title" class="field" maxlength="100" /></FormField>
+            <FormField label="时钟标签"><input v-model="form.clock_label" class="field" maxlength="100" placeholder="SHANGHAI · UTC+8" /></FormField>
             <FormField label="时钟时区" :error="fieldErrors.timezone" hint="IANA 时区"><input v-model="form.timezone" class="field" placeholder="Asia/Shanghai" /></FormField>
             <FormField label="时间格式"><select v-model="form.time_format" class="field"><option value="24">24 小时制</option><option value="12">12 小时制</option></select></FormField>
           </div>
@@ -78,7 +79,7 @@ async function save() {
           <div class="grid gap-5 min-[760px]:grid-cols-2">
             <ImageUploadField v-model="form.background.day_url" label="日间背景" required /><ImageUploadField v-model="form.background.night_url" label="夜间背景" required />
             <FormField label="背景调度时区" :error="fieldErrors.background_timezone"><input v-model="form.background.timezone" class="field" placeholder="Asia/Shanghai" /></FormField>
-            <FormField label="淡入淡出时长" :error="fieldErrors.duration_ms" hint="毫秒"><input v-model.number="form.background.duration_ms" class="field" type="number" min="0" max="10000" step="100" /></FormField>
+            <FormField label="淡入淡出时长" :error="fieldErrors.duration_ms" hint="毫秒"><input v-model.number="form.background.duration_ms" class="field" type="number" min="0" max="60000" step="100" /></FormField>
             <FormField label="日间开始时间" :error="fieldErrors.day_start"><input v-model="form.background.day_start" class="field" type="time" /></FormField>
             <FormField label="夜间开始时间" :error="fieldErrors.night_start"><input v-model="form.background.night_start" class="field" type="time" /></FormField>
           </div>
@@ -118,7 +119,7 @@ async function save() {
           <h3 class="mb-4 text-xs font-semibold tracking-wider text-violet-200/65">终端与留言</h3>
           <div class="grid items-center gap-5 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 min-[760px]:grid-cols-2">
             <FormField label="Fastfetch 停留时长" :error="fieldErrors.fastfetch_loading_ms" hint="毫秒"><input v-model.number="form.terminal.fastfetch_loading_ms" class="field" type="number" min="0" max="10000" step="100" /></FormField>
-            <FormField label="留言最大长度" :error="fieldErrors.guestbook_max_length" hint="字符"><input v-model.number="form.guestbook_max_length" class="field" type="number" min="1" max="2000" /></FormField>
+            <FormField label="留言最大长度" :error="fieldErrors.guestbook_max_length" hint="字符"><input v-model.number="form.guestbook_max_length" class="field" type="number" min="1" max="10000" /></FormField>
             <ToggleSwitch v-model="form.guestbook_auto_publish" label="新留言自动发布" />
           </div>
         </section>

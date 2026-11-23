@@ -132,7 +132,7 @@ func (s *NeteaseService) SaveConfig(input NeteaseConfig) error {
 	return s.repo.SaveProviderConfig(neteaseProvider, current)
 }
 
-func (s *NeteaseService) QRCreate(ctx context.Context, _ ...string) (NeteaseQRCreateResult, error) {
+func (s *NeteaseService) QRCreate(ctx context.Context) (NeteaseQRCreateResult, error) {
 	var keyResponse struct {
 		Code int `json:"code"`
 		Data struct {

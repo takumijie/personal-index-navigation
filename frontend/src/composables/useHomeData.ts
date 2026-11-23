@@ -34,10 +34,26 @@ export function useHomeData() {
           guestbook.value = []
           visitor.value = null
           terminalError.value = errorMessage(reason)
+          terminalDataTask = null
         }
       }
     })()
     return terminalDataTask
+  }
+
+  async function loadTracks(): Promise<Track[]> {
+    try {
+      return await publicApi.playlist()
+    } catch (reason) {
+      tracks.value = []
+      if (import.meta.env.DEV) {
+        const mock = await import('@/api/mock')
+        error.value = '音乐服务连接不可用，当前显示开发预览曲目'
+        return mock.mockTracks
+      }
+      error.value = `音乐暂时不可用：${errorMessage(reason)}`
+      return []
+    }
   }
 
   async function load() {
@@ -47,7 +63,7 @@ export function useHomeData() {
     void loadTerminalData()
     try {
       const [profileData, navigationData, deviceData, settingsData, trackData] = await Promise.all([
-        publicApi.profile(), publicApi.navigation(), publicApi.devices(), publicApi.settings(), publicApi.playlist(),
+        publicApi.profile(), publicApi.navigation(), publicApi.devices(), publicApi.settings(), loadTracks(),
       ])
       profile.value = profileData
       navigation.value = navigationData

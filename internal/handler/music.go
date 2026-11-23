@@ -39,6 +39,10 @@ func (a *API) Playback(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "music_unavailable", "音乐服务尚未配置")
 		return
 	}
+	if !a.music.AllowPlayback(c.ClientIP()) {
+		fail(c, http.StatusTooManyRequests, "rate_limited", "播放接口请求过于频繁，请稍后重试")
+		return
+	}
 	item, err := a.music.Playback(c.Request.Context(), id)
 	if err != nil {
 		handleError(c, err)
@@ -56,6 +60,10 @@ func (a *API) Lyrics(c *gin.Context) {
 		fail(c, http.StatusServiceUnavailable, "music_unavailable", "音乐服务尚未配置")
 		return
 	}
+	if !a.music.AllowLyrics(c.ClientIP()) {
+		fail(c, http.StatusTooManyRequests, "rate_limited", "歌词接口请求过于频繁，请稍后重试")
+		return
+	}
 	item, err := a.music.Lyrics(c.Request.Context(), id)
 	if err != nil {
 		handleError(c, err)
@@ -71,6 +79,10 @@ func (a *API) Cover(c *gin.Context) {
 	}
 	if a.music == nil {
 		fail(c, http.StatusServiceUnavailable, "music_unavailable", "音乐服务尚未配置")
+		return
+	}
+	if !a.music.AllowCover(c.ClientIP()) {
+		fail(c, http.StatusTooManyRequests, "rate_limited", "封面接口请求过于频繁，请稍后重试")
 		return
 	}
 	item, err := a.music.Cover(c.Request.Context(), id)

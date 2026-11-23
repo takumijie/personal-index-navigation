@@ -54,18 +54,23 @@ type MusicProvider interface {
 }
 
 type MusicService struct {
-	repo         *repository.Repository
-	root         string
-	providers    map[string]MusicProvider
-	limit        *IPRateLimiter
-	coverMu      sync.Mutex
-	missingCover map[uint]time.Time
+	repo          *repository.Repository
+	root          string
+	providers     map[string]MusicProvider
+	limit         *IPRateLimiter
+	playbackLimit *IPRateLimiter
+	lyricsLimit   *IPRateLimiter
+	coverLimit    *IPRateLimiter
+	coverMu       sync.Mutex
+	missingCover  map[uint]time.Time
 }
 
 func NewMusicService(repo *repository.Repository, storageRoot string) *MusicService {
 	return &MusicService{
 		repo: repo, root: storageRoot, providers: make(map[string]MusicProvider),
-		limit: NewIPRateLimiter(120, time.Minute), missingCover: make(map[uint]time.Time),
+		limit: NewIPRateLimiter(120, time.Minute), playbackLimit: NewIPRateLimiter(120, time.Minute),
+		lyricsLimit: NewIPRateLimiter(120, time.Minute), coverLimit: NewIPRateLimiter(300, time.Minute),
+		missingCover: make(map[uint]time.Time),
 	}
 }
 
@@ -74,6 +79,12 @@ func (s *MusicService) RegisterProvider(source string, provider MusicProvider) {
 }
 
 func (s *MusicService) Allow(ip string) bool { return s.limit.Allow(ip) }
+
+func (s *MusicService) AllowPlayback(ip string) bool { return s.playbackLimit.Allow(ip) }
+
+func (s *MusicService) AllowLyrics(ip string) bool { return s.lyricsLimit.Allow(ip) }
+
+func (s *MusicService) AllowCover(ip string) bool { return s.coverLimit.Allow(ip) }
 
 func (s *MusicService) Playback(ctx context.Context, id uint) (Playback, error) {
 	track, err := s.publicTrack(id)

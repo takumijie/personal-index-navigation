@@ -65,15 +65,18 @@ type S3ObjectList struct {
 }
 
 type S3Service struct {
-	repo       *repository.Repository
-	httpClient *http.Client
+	repo            *repository.Repository
+	httpClient      *http.Client
+	coverHTTPClient *http.Client
 }
 
 func NewS3Service(repo *repository.Repository, httpClient *http.Client) *S3Service {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 20 * time.Second}
 	}
-	return &S3Service{repo: repo, httpClient: httpClient}
+	coverHTTPClient := *httpClient
+	coverHTTPClient.Timeout = 5 * time.Minute
+	return &S3Service{repo: repo, httpClient: httpClient, coverHTTPClient: &coverHTTPClient}
 }
 
 func (s *S3Service) SaveConfig(config S3Config) error {
@@ -273,7 +276,7 @@ func (s *S3Service) Cover(ctx context.Context, track model.MusicTrack) (io.ReadC
 	if track.Source != s3Provider || !validS3ObjectKey(track.ObjectKey) {
 		return nil, invalid("S3 Object Key 无效")
 	}
-	output, err := s.client(config).GetObject(ctx, &s3.GetObjectInput{
+	output, err := s.coverClient(config).GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(config.Bucket), Key: aws.String(track.ObjectKey),
 	})
 	if err != nil {
@@ -334,10 +337,18 @@ func (s *S3Service) loadConfig() (S3Config, error) {
 }
 
 func (s *S3Service) client(config S3Config) *s3.Client {
+	return s3Client(config, s.httpClient)
+}
+
+func (s *S3Service) coverClient(config S3Config) *s3.Client {
+	return s3Client(config, s.coverHTTPClient)
+}
+
+func s3Client(config S3Config, httpClient *http.Client) *s3.Client {
 	awsConfig := aws.Config{
 		Region:       config.Region,
 		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(config.AccessKeyID, config.SecretAccessKey, "")),
-		HTTPClient:   s.httpClient,
+		HTTPClient:   httpClient,
 		BaseEndpoint: aws.String(config.Endpoint),
 	}
 	return s3.NewFromConfig(awsConfig, func(options *s3.Options) {

@@ -4,6 +4,7 @@ import { Music2, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, V
 import { publicApi } from '@/api'
 import type { MusicSettings, Track } from '@/types'
 import { findCurrentLrcLine, parseLrc, type LrcLine } from '@/utils/lrc'
+import { playbackNeedsRefresh as playbackExpired } from '@/utils/playback'
 
 type PlaybackMode = 'random' | 'sequential' | 'repeat-one'
 
@@ -48,8 +49,10 @@ const currentLyric = computed(() => currentLyricIndex.value >= 0 ? lyrics.value[
 let disposed = false
 let trackSerial = 0
 let playbackSerial = 0
+let playbackExpiresAt = ''
 let pendingPlaybackSerial = -1
 let playRequested = false
+let autoRetryUsed = false
 
 function sortedTracks(tracks: Track[]) {
   return tracks.filter((track) => track.enabled).sort((a, b) => a.sort - b.sort)
@@ -87,26 +90,41 @@ async function playLoadedAudio(serial: number) {
   }
 }
 
+function clearPlayback() {
+  playbackUrl.value = ''
+  playbackSerial = 0
+  playbackExpiresAt = ''
+}
+
+function playbackNeedsRefresh(serial: number): boolean {
+  if (playbackSerial !== serial || !playbackUrl.value) return true
+  return playbackExpired(playbackExpiresAt)
+}
+
 async function requestPlaybackAndPlay(track: Track, serial: number) {
   if (pendingPlaybackSerial === serial) return
-  if (playbackSerial === serial && playbackUrl.value) {
+  if (!playbackNeedsRefresh(serial)) {
     await playLoadedAudio(serial)
     return
   }
 
+  clearPlayback()
   pendingPlaybackSerial = serial
   try {
     const playback = await publicApi.playback(track.id)
     if (!isCurrentRequest(serial)) return
     playbackUrl.value = playback.url
     playbackSerial = serial
+    playbackExpiresAt = playback.expires_at || ''
     await nextTick()
     if (!audio.value || !isCurrentRequest(serial)) return
     audio.value.load()
     await playLoadedAudio(serial)
   } catch {
     if (!isCurrentRequest(serial)) return
+    clearPlayback()
     playRequested = false
+    playing.value = false
     error.value = '音频暂时无法播放'
   } finally {
     if (pendingPlaybackSerial === serial) pendingPlaybackSerial = -1
@@ -122,6 +140,7 @@ function togglePlay() {
     return
   }
   playRequested = true
+  autoRetryUsed = false
   void requestPlaybackAndPlay(currentTrack.value, trackSerial)
 }
 
@@ -129,8 +148,8 @@ function changeTrack(index: number, continuePlaying = playRequested || playing.v
   const tracks = enabledTracks.value
   const serial = ++trackSerial
   playRequested = continuePlaying && tracks.length > 0
-  playbackSerial = 0
-  playbackUrl.value = ''
+  autoRetryUsed = false
+  clearPlayback()
   currentIndex.value = tracks.length ? (index + tracks.length) % tracks.length : 0
   currentTime.value = 0
   duration.value = 0
@@ -184,7 +203,7 @@ function handleEnded() {
   playRequested = true
   audio.value.currentTime = 0
   currentTime.value = 0
-  void playLoadedAudio(trackSerial)
+  void requestPlaybackAndPlay(currentTrack.value, trackSerial)
 }
 
 function seek(event: Event) {
@@ -192,6 +211,7 @@ function seek(event: Event) {
   if (audio.value && Number.isFinite(duration.value)) {
     audio.value.currentTime = value / 100 * duration.value
     currentTime.value = audio.value.currentTime
+    if (playRequested && currentTrack.value) void requestPlaybackAndPlay(currentTrack.value, trackSerial)
   }
 }
 
@@ -215,9 +235,23 @@ function handleDurationChange() {
 }
 
 function handleAudioError() {
-  if (disposed || !currentTrack.value || !playbackUrl.value) return
-  playRequested = false
-  error.value = '音频加载失败'
+  const track = currentTrack.value
+  if (disposed || !track || !playbackUrl.value) return
+  const serial = trackSerial
+  clearPlayback()
+  playing.value = false
+  void nextTick(() => {
+    if (isCurrentRequest(serial) && !playbackUrl.value) audio.value?.load()
+  })
+  if (autoRetryUsed) {
+    playRequested = false
+    error.value = '音频加载失败'
+    return
+  }
+  autoRetryUsed = true
+  error.value = ''
+  playRequested = true
+  void requestPlaybackAndPlay(track, serial)
 }
 
 onMounted(async () => {

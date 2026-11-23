@@ -3,8 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -23,6 +23,7 @@ type Server struct {
 	Port           int      `yaml:"port"`
 	Mode           string   `yaml:"mode"`
 	TrustedProxies []string `yaml:"trusted_proxies"`
+	CookieSecure   *bool    `yaml:"cookie_secure"`
 }
 
 type Database struct {
@@ -45,31 +46,50 @@ type Upload struct {
 
 func Default() Config {
 	return Config{
-		Server: Server{Listen: "0.0.0.0", Port: 8080, Mode: "debug", TrustedProxies: []string{}},
+		Server:   Server{Listen: "127.0.0.1", Port: 8080, Mode: "release", TrustedProxies: []string{}},
 		Database: Database{Path: "data/homepage.db"},
-		Storage: Storage{Path: "storage"},
-		Admin: Admin{Username: "admin", Password: "admin123"},
-		Upload: Upload{MaxImageBytes: 10 << 20, MaxMusicBytes: 50 << 20},
+		Storage:  Storage{Path: "storage"},
+		Admin:    Admin{Username: "admin"},
+		Upload:   Upload{MaxImageBytes: 10 << 20, MaxMusicBytes: 50 << 20},
 	}
 }
 
 func Load() (Config, error) {
 	cfg := Default()
-	path := os.Getenv("HOMEPAGE_CONFIG")
-	if path == "" {
+	path, explicitPath := os.LookupEnv("HOMEPAGE_CONFIG")
+	if explicitPath && strings.TrimSpace(path) == "" {
+		return cfg, errors.New("HOMEPAGE_CONFIG 已设置但路径为空")
+	}
+	if !explicitPath {
 		path = "config.yaml"
 	}
 	data, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return cfg, fmt.Errorf("读取配置: %w", err)
-	}
-	if err == nil {
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			return cfg, fmt.Errorf("解析配置: %w", err)
+	if err != nil {
+		if explicitPath || !errors.Is(err, os.ErrNotExist) {
+			return cfg, fmt.Errorf("读取配置: %w", err)
 		}
+	} else if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("解析配置: %w", err)
 	}
 	if mode := os.Getenv("HOMEPAGE_SERVER_MODE"); mode != "" {
 		cfg.Server.Mode = mode
+	}
+	if listen := os.Getenv("HOMEPAGE_SERVER_LISTEN"); listen != "" {
+		cfg.Server.Listen = listen
+	}
+	if value := os.Getenv("HOMEPAGE_SERVER_PORT"); value != "" {
+		port, err := strconv.Atoi(value)
+		if err != nil {
+			return cfg, errors.New("HOMEPAGE_SERVER_PORT 必须是整数")
+		}
+		cfg.Server.Port = port
+	}
+	if value := os.Getenv("HOMEPAGE_SERVER_COOKIE_SECURE"); value != "" {
+		secure, err := strconv.ParseBool(value)
+		if err != nil {
+			return cfg, errors.New("HOMEPAGE_SERVER_COOKIE_SECURE 仅支持 true 或 false")
+		}
+		cfg.Server.CookieSecure = &secure
 	}
 	if path := os.Getenv("HOMEPAGE_DATABASE_PATH"); path != "" {
 		cfg.Database.Path = path
@@ -90,13 +110,10 @@ func Load() (Config, error) {
 		return cfg, errors.New("数据库与 storage 路径不能为空")
 	}
 	if strings.TrimSpace(cfg.Admin.Username) == "" || len(cfg.Admin.Password) < 8 {
-		return cfg, errors.New("管理员用户名不能为空，密码至少 8 位")
+		return cfg, errors.New("管理员用户名不能为空，且必须通过配置或 HOMEPAGE_ADMIN_PASSWORD 提供至少 8 位密码")
 	}
 	if cfg.Admin.Password == "admin123" {
-		if cfg.Server.Mode == "release" {
-			return cfg, errors.New("release 模式不能使用默认管理员密码，请设置 HOMEPAGE_ADMIN_PASSWORD")
-		}
-		slog.Warn("正在使用仅限本地开发的默认管理员密码 admin123")
+		return cfg, errors.New("不能使用默认管理员密码 admin123，请设置安全密码")
 	}
 	if cfg.Upload.MaxImageBytes <= 0 || cfg.Upload.MaxMusicBytes <= 0 {
 		return cfg, errors.New("上传大小限制必须大于 0")
@@ -106,4 +123,11 @@ func Load() (Config, error) {
 
 func (c Config) Address() string {
 	return fmt.Sprintf("%s:%d", c.Server.Listen, c.Server.Port)
+}
+
+func (c Config) SecureCookies() bool {
+	if c.Server.CookieSecure != nil {
+		return *c.Server.CookieSecure
+	}
+	return c.Server.Mode == "release"
 }

@@ -13,7 +13,7 @@ import { useBackground } from '@/composables/useBackground'
 import { useHomeData } from '@/composables/useHomeData'
 
 const { profile, navigation, devices, settings, guestbook, tracks, visitor, loading, error, terminalError, loadTerminalData, reload } = useHomeData()
-const { mode, activeUrl, loaded, duration, reducedMotion } = useBackground(settings)
+const { mode, activeUrl, loaded, failed: backgroundFailed, duration, reducedMotion } = useBackground(settings)
 
 watchEffect(() => { document.title = settings.value.site_title })
 
@@ -24,7 +24,7 @@ const rightVisible = computed(() => cards.value.terminal || cards.value.clock)
 // 加载页：每次进入主页播放，动画完成且首屏数据与当前背景就绪后自动过渡，8 秒超时兜底
 const bootPhase = ref<'boot' | 'leaving' | 'done'>('boot')
 const bootTimedOut = ref(false)
-const bootReady = computed(() => bootTimedOut.value || (!loading.value && !!profile.value && loaded.value.has(activeUrl.value)))
+const bootReady = computed(() => bootTimedOut.value || (!loading.value && !!profile.value && (loaded.value.has(activeUrl.value) || backgroundFailed.value.has(activeUrl.value))))
 let bootTimer: ReturnType<typeof setTimeout> | undefined
 onMounted(() => {
   bootTimer = setTimeout(() => { bootTimedOut.value = true }, 8000)

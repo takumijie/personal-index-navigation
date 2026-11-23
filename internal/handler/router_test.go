@@ -2,15 +2,18 @@ package handler
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"homepage/internal/config"
@@ -18,6 +21,7 @@ import (
 	"homepage/internal/model"
 	"homepage/internal/repository"
 	"homepage/internal/service"
+	"homepage/web"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -128,6 +132,33 @@ func responseData[T any](t *testing.T, response *httptest.ResponseRecorder) T {
 		t.Fatalf("解析响应失败: %v; %s", err, response.Body.String())
 	}
 	return envelope.Data
+}
+
+func TestSessionCookieSecureConfiguration(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg.Server.Mode = gin.ReleaseMode
+	secureRouter := openTestRouter(t, app.cfg, app.db).router
+	cookie := login(t, secureRouter)
+	if !cookie.Secure {
+		t.Fatal("release 模式默认应设置 Secure Cookie")
+	}
+	response := performJSON(t, secureRouter, http.MethodPost, "/api/v1/admin/logout", nil, cookie, http.StatusOK)
+	var cleared *http.Cookie
+	for _, item := range response.Result().Cookies() {
+		if item.Name == sessionCookie {
+			cleared = item
+		}
+	}
+	if cleared == nil || !cleared.Secure || cleared.Value != "" {
+		t.Fatalf("退出 Cookie 属性与登录不一致: %+v", cleared)
+	}
+
+	secure := false
+	app.cfg.Server.CookieSecure = &secure
+	insecureRouter := openTestRouter(t, app.cfg, app.db).router
+	if cookie := login(t, insecureRouter); cookie.Secure {
+		t.Fatal("显式 HTTP 调试配置不应设置 Secure Cookie")
+	}
 }
 
 func TestAdminContentLifecycleAndPersistence(t *testing.T) {
@@ -308,6 +339,144 @@ func TestUploadsMusicPlaylistAndRange(t *testing.T) {
 	}
 	if !bytes.Equal(response.Body.Bytes(), wav[:100]) {
 		t.Fatal("音频 Range 返回了错误内容")
+	}
+}
+
+func TestRouteBodyLimits(t *testing.T) {
+	app := newTestApp(t)
+	cookie := login(t, app.router)
+	largeLogin := []byte(`{"username":"` + strings.Repeat("a", 64<<10) + `","password":"password"}`)
+	performRawBody(t, app.router, "/api/v1/admin/login", largeLogin, "application/json", nil, false, http.StatusRequestEntityTooLarge)
+
+	largeJSON := []byte(`{"message":"` + strings.Repeat("a", (2<<20)+1) + `"}`)
+	performRawBody(t, app.router, "/api/v1/guestbook", largeJSON, "application/json", nil, true, http.StatusRequestEntityTooLarge)
+	performRawBody(t, app.router, "/api/v1/admin/music/tracks/create", largeJSON, "application/json", cookie, true, http.StatusRequestEntityTooLarge)
+	performUpload(t, app.router, "/api/v1/admin/uploads/lyrics", "large.lrc", make([]byte, 2<<20), cookie, http.StatusRequestEntityTooLarge)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/session", bytes.NewReader(make([]byte, 3<<20)))
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	app.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET 不应受 JSON 请求体限制: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestEmbeddedAssetsCachingCompressionAndSPAFallback(t *testing.T) {
+	app := newTestApp(t)
+	entries, err := fs.ReadDir(web.Assets, "dist/assets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetName := ""
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".js" {
+			assetName = entry.Name()
+			break
+		}
+	}
+	if assetName == "" {
+		t.Fatal("嵌入资源中没有 JS 文件")
+	}
+	assetPath := "/assets/" + assetName
+	original, err := fs.ReadFile(web.Assets, "dist/assets/"+assetName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path, acceptEncoding string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		if acceptEncoding != "" {
+			request.Header.Set("Accept-Encoding", acceptEncoding)
+		}
+		response := httptest.NewRecorder()
+		app.router.ServeHTTP(response, request)
+		return response
+	}
+
+	response := get(assetPath, "")
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" ||
+		response.Header().Get("Content-Encoding") != "" || !strings.Contains(response.Header().Get("Vary"), "Accept-Encoding") ||
+		!bytes.Equal(response.Body.Bytes(), original) {
+		t.Fatalf("原始 hash 资源响应错误: status=%d headers=%v", response.Code, response.Header())
+	}
+
+	response = get(assetPath, "gzip")
+	if response.Code != http.StatusOK || response.Header().Get("Content-Encoding") != "gzip" ||
+		response.Header().Get("Content-Length") != fmt.Sprint(response.Body.Len()) {
+		t.Fatalf("gzip 资源响应头错误: status=%d headers=%v", response.Code, response.Header())
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decompressed, original) {
+		t.Fatal("gzip 解压后的资源与原始内容不一致")
+	}
+
+	response = get(assetPath, "gzip;q=0")
+	if response.Header().Get("Content-Encoding") != "" || !bytes.Equal(response.Body.Bytes(), original) {
+		t.Fatal("声明 gzip;q=0 的客户端不应收到压缩内容")
+	}
+
+	for _, route := range []string{"/", "/admin"} {
+		response = get(route, "")
+		if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-cache" ||
+			!strings.Contains(response.Body.String(), "<html") {
+			t.Fatalf("SPA 路由 %s 响应错误: status=%d headers=%v", route, response.Code, response.Header())
+		}
+	}
+	for _, route := range []string{"/assets/does-not-exist.js", "/favicon.ico"} {
+		response = get(route, "")
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("缺失资源 %s 应返回 404，实际 %d: %s", route, response.Code, response.Body.String())
+		}
+	}
+
+	response = performJSON(t, app.router, http.MethodPost, "/api/v1/admin/login", gin.H{
+		"username": "admin", "password": "test-password",
+	}, nil, http.StatusOK)
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("登录响应应禁止缓存")
+	}
+	response = performJSON(t, app.router, http.MethodGet, "/api/v1/admin/session", nil, nil, http.StatusUnauthorized)
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("未认证管理响应也应禁止缓存")
+	}
+}
+
+func performRawBody(t *testing.T, handler http.Handler, path string, body []byte, contentType string, cookie *http.Cookie, unknownLength bool, status int) {
+	t.Helper()
+	var reader io.Reader = bytes.NewReader(body)
+	if unknownLength {
+		reader = io.NopCloser(bytes.NewReader(body))
+	}
+	request := httptest.NewRequest(http.MethodPost, path, reader)
+	request.Header.Set("Content-Type", contentType)
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != status {
+		t.Fatalf("POST %s: 状态 %d，预期 %d，响应 %s", path, response.Code, status, response.Body.String())
+	}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if status == http.StatusRequestEntityTooLarge {
+		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || envelope.Error.Code != "request_too_large" {
+			t.Fatalf("超限响应不统一: %s", response.Body.String())
+		}
 	}
 }
 

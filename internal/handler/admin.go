@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -30,7 +31,7 @@ func (a *API) Login(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	setSessionCookie(c, token, int(service.SessionDuration.Seconds()))
+	a.setSessionCookie(c, token, int(service.SessionDuration.Seconds()))
 	success(c, session)
 }
 
@@ -40,7 +41,7 @@ func (a *API) Logout(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	setSessionCookie(c, "", -1)
+	a.setSessionCookie(c, "", -1)
 	success(c, gin.H{"logged_out": true})
 }
 
@@ -49,9 +50,9 @@ func (a *API) Session(c *gin.Context) {
 	success(c, session)
 }
 
-func setSessionCookie(c *gin.Context, token string, maxAge int) {
+func (a *API) setSessionCookie(c *gin.Context, token string, maxAge int) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(sessionCookie, token, maxAge, "/", "", c.Request.TLS != nil, true)
+	c.SetCookie(sessionCookie, token, maxAge, "/", "", a.cookieSecure, true)
 }
 
 func parseID(c *gin.Context) (uint, bool) {
@@ -300,6 +301,11 @@ func (a *API) UploadLyrics(c *gin.Context) { a.upload(c, "lyrics") }
 func (a *API) upload(c *gin.Context, kind string) {
 	header, err := c.FormFile("file")
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			fail(c, http.StatusRequestEntityTooLarge, "request_too_large", "请求体超过大小限制")
+			return
+		}
 		fail(c, http.StatusBadRequest, "invalid_file", "请使用 multipart 的 file 字段上传文件")
 		return
 	}

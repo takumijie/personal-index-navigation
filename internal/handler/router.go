@@ -1,13 +1,18 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"homepage/internal/config"
 	"homepage/internal/middleware"
@@ -17,6 +22,7 @@ import (
 )
 
 func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
+	api.cookieSecure = cfg.SecureCookies()
 	gin.SetMode(cfg.Server.Mode)
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
@@ -31,12 +37,6 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	if cfg.Server.Mode == gin.DebugMode {
 		router.Use(middleware.DevelopmentCORS())
 	}
-	maxBody := cfg.Upload.MaxMusicBytes
-	if cfg.Upload.MaxImageBytes > maxBody {
-		maxBody = cfg.Upload.MaxImageBytes
-	}
-	router.Use(middleware.BodyLimit(maxBody + (1 << 20)))
-
 	router.GET("/healthz", api.Health)
 	router.GET("/storage/images/:filename", staticFile(cfg.Storage.Path, "images"))
 	router.GET("/storage/music/:filename", staticFile(cfg.Storage.Path, "music"))
@@ -48,7 +48,7 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	v1.GET("/devices", api.Devices)
 	v1.GET("/settings", api.Settings)
 	v1.GET("/guestbook", api.Guestbook)
-	v1.POST("/guestbook", api.CreateGuestbook)
+	v1.POST("/guestbook", middleware.BodyLimit(2<<20), api.CreateGuestbook)
 	v1.GET("/music/tracks", api.Tracks)
 	v1.GET("/music/playlist", api.Playlist)
 	v1.GET("/music/playlists", api.Playlists)
@@ -57,29 +57,30 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	v1.GET("/music/tracks/:id/lyrics", api.Lyrics)
 	v1.GET("/music/tracks/:id/cover", api.Cover)
 	v1.GET("/visitor", api.Visitor)
-	v1.POST("/visitor", api.Visitor)
+	v1.POST("/visitor", middleware.BodyLimit(2<<20), api.Visitor)
 
-	admin := v1.Group("/admin")
-	admin.POST("/login", api.Login)
+	admin := v1.Group("/admin", middleware.NoStore())
+	admin.POST("/login", middleware.BodyLimit(64<<10), api.Login)
 	admin.Use(middleware.RequireAuth(api.auth, sessionCookie))
-	admin.POST("/logout", api.Logout)
-	admin.GET("/session", api.Session)
-	admin.GET("/profile", api.Profile)
-	admin.PUT("/profile", api.UpdateProfile)
-	admin.GET("/navigation", api.AdminNavigation)
-	admin.POST("/navigation", api.CreateNavigation)
-	admin.PUT("/navigation/:id", api.UpdateNavigation)
-	admin.DELETE("/navigation/:id", api.DeleteNavigation)
-	admin.GET("/devices", api.AdminDevices)
-	admin.POST("/devices", api.CreateDevice)
-	admin.PUT("/devices/:id", api.UpdateDevice)
-	admin.DELETE("/devices/:id", api.DeleteDevice)
-	admin.GET("/guestbook", api.AdminGuestbook)
-	admin.PATCH("/guestbook/:id", api.UpdateGuestbook)
-	admin.DELETE("/guestbook/:id", api.DeleteGuestbook)
-	admin.GET("/settings", api.Settings)
-	admin.PUT("/settings", api.UpdateSettings)
-	musicAdmin := admin.Group("/music", middleware.BodyLimit(1<<20))
+	adminJSON := admin.Group("", middleware.BodyLimit(2<<20))
+	adminJSON.POST("/logout", api.Logout)
+	adminJSON.GET("/session", api.Session)
+	adminJSON.GET("/profile", api.Profile)
+	adminJSON.PUT("/profile", api.UpdateProfile)
+	adminJSON.GET("/navigation", api.AdminNavigation)
+	adminJSON.POST("/navigation", api.CreateNavigation)
+	adminJSON.PUT("/navigation/:id", api.UpdateNavigation)
+	adminJSON.DELETE("/navigation/:id", api.DeleteNavigation)
+	adminJSON.GET("/devices", api.AdminDevices)
+	adminJSON.POST("/devices", api.CreateDevice)
+	adminJSON.PUT("/devices/:id", api.UpdateDevice)
+	adminJSON.DELETE("/devices/:id", api.DeleteDevice)
+	adminJSON.GET("/guestbook", api.AdminGuestbook)
+	adminJSON.PATCH("/guestbook/:id", api.UpdateGuestbook)
+	adminJSON.DELETE("/guestbook/:id", api.DeleteGuestbook)
+	adminJSON.GET("/settings", api.Settings)
+	adminJSON.PUT("/settings", api.UpdateSettings)
+	musicAdmin := adminJSON.Group("/music", middleware.BodyLimit(1<<20))
 	musicAdmin.POST("/tracks/list", api.AdminTracks)
 	musicAdmin.POST("/tracks/create", api.CreateTrack)
 	musicAdmin.POST("/tracks/update", api.UpdateTrack)
@@ -98,7 +99,7 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	musicAdmin.POST("/netease/search", api.NeteaseSearch)
 	musicAdmin.POST("/netease/create-playlist", api.NeteaseCreatePlaylist)
 	musicAdmin.POST("/netease/append-playlist", api.NeteaseAppendPlaylist)
-	musicAdmin.POST("/netease/import-playlist", api.NeteaseImportPlaylist)
+	musicAdmin.POST("/netease/import-playlist", middleware.RequestDeadline(5*time.Minute), api.NeteaseImportPlaylist)
 	musicAdmin.POST("/s3/config/read", api.S3ReadConfig)
 	musicAdmin.POST("/s3/config/save", api.S3SaveConfig)
 	musicAdmin.POST("/s3/test", api.S3Test)
@@ -106,9 +107,9 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	musicAdmin.POST("/s3/objects/delete", api.S3DeleteObject)
 	musicAdmin.POST("/s3/import", api.S3Import)
 	musicAdmin.POST("/s3/append-playlist", api.S3AppendPlaylist)
-	admin.POST("/uploads/image", api.UploadImage)
-	admin.POST("/uploads/music", api.UploadMusic)
-	admin.POST("/uploads/lyrics", api.UploadLyrics)
+	admin.POST("/uploads/image", middleware.BodyLimit(cfg.Upload.MaxImageBytes+(1<<20)), api.UploadImage)
+	admin.POST("/uploads/music", middleware.RequestDeadline(5*time.Minute), middleware.BodyLimit(cfg.Upload.MaxMusicBytes+(1<<20)), api.UploadMusic)
+	admin.POST("/uploads/lyrics", middleware.BodyLimit((1<<20)+(64<<10)), api.UploadLyrics)
 
 	assets, err := fs.Sub(web.Assets, "dist")
 	if err != nil {
@@ -125,7 +126,11 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 		name := strings.TrimPrefix(path.Clean("/"+c.Request.URL.Path), "/")
 		if name != "" && name != "." {
 			if info, err := fs.Stat(assets, name); err == nil && !info.IsDir() {
-				http.ServeFileFS(c.Writer, c.Request, assets, name)
+				serveEmbeddedFile(c, assets, name)
+				return
+			}
+			if path.Ext(name) != "" {
+				fail(c, http.StatusNotFound, "not_found", "接口或资源不存在")
 				return
 			}
 		}
@@ -133,10 +138,90 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 			fail(c, http.StatusNotFound, "not_found", "前端资源尚未构建")
 			return
 		}
-		c.Header("Cache-Control", "no-cache")
-		http.ServeFileFS(c.Writer, c.Request, assets, "index.html")
+		serveEmbeddedFile(c, assets, "index.html")
 	})
 	return router, nil
+}
+
+func serveEmbeddedFile(c *gin.Context, assets fs.FS, name string) {
+	if strings.HasPrefix(name, "assets/") {
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	} else if name == "index.html" {
+		c.Header("Cache-Control", "no-cache")
+	}
+	if !compressibleAsset(name) {
+		http.ServeFileFS(c.Writer, c.Request, assets, name)
+		return
+	}
+	c.Writer.Header().Add("Vary", "Accept-Encoding")
+	if c.GetHeader("Range") != "" || !acceptsGzip(c.GetHeader("Accept-Encoding")) {
+		http.ServeFileFS(c.Writer, c.Request, assets, name)
+		return
+	}
+	content, err := fs.ReadFile(assets, name)
+	if err != nil {
+		fail(c, http.StatusNotFound, "not_found", "资源不存在")
+		return
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(content); err != nil {
+		_ = writer.Close()
+		handleError(c, err)
+		return
+	}
+	if err := writer.Close(); err != nil {
+		handleError(c, err)
+		return
+	}
+	c.Header("Content-Encoding", "gzip")
+	c.Header("Content-Length", strconv.Itoa(compressed.Len()))
+	c.Data(http.StatusOK, assetContentType(name, content), compressed.Bytes())
+}
+
+func compressibleAsset(name string) bool {
+	mediaType, _, err := mime.ParseMediaType(assetContentType(name, nil))
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(mediaType, "text/") || mediaType == "application/javascript" ||
+		mediaType == "application/json" || mediaType == "application/xml" || mediaType == "image/svg+xml"
+}
+
+func assetContentType(name string, content []byte) string {
+	if contentType := mime.TypeByExtension(path.Ext(name)); contentType != "" {
+		return contentType
+	}
+	return http.DetectContentType(content)
+}
+
+func acceptsGzip(header string) bool {
+	wildcard := false
+	for _, item := range strings.Split(header, ",") {
+		parts := strings.Split(item, ";")
+		coding := strings.ToLower(strings.TrimSpace(parts[0]))
+		if coding != "gzip" && coding != "*" {
+			continue
+		}
+		quality := 1.0
+		for _, parameter := range parts[1:] {
+			key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+			if !ok || !strings.EqualFold(strings.TrimSpace(key), "q") {
+				continue
+			}
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil {
+				quality = 0
+			} else {
+				quality = parsed
+			}
+		}
+		if coding == "gzip" {
+			return quality > 0
+		}
+		wildcard = quality > 0
+	}
+	return wildcard
 }
 
 func staticFile(root, kind string) gin.HandlerFunc {

@@ -27,6 +27,7 @@ COPY --from=backend-build /out/homepage /usr/local/bin/homepage
 COPY --from=backend-build --chown=65532:65532 /out/data /data
 COPY --from=backend-build --chown=65532:65532 /out/storage /storage
 ENV HOMEPAGE_SERVER_MODE=release \
+    HOMEPAGE_SERVER_LISTEN=0.0.0.0 \
     HOMEPAGE_DATABASE_PATH=/data/homepage.db \
     HOMEPAGE_STORAGE_PATH=/storage
 EXPOSE 8080

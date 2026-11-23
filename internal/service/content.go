@@ -259,7 +259,13 @@ func (s *ContentService) DeleteTrack(id uint) error {
 	return s.repo.DeleteTrack(id)
 }
 
-func (s *ContentService) Playlist() (model.Playlist, error) { return s.repo.Playlist() }
+func (s *ContentService) Playlist() (model.Playlist, error) {
+	playlist, err := s.repo.Playlist()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Playlist{Tracks: make([]model.MusicTrack, 0)}, nil
+	}
+	return playlist, err
+}
 
 func (s *ContentService) Playlists(enabledOnly bool) ([]model.Playlist, error) {
 	return s.repo.Playlists(enabledOnly, true)

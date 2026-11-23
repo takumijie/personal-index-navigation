@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,13 +12,30 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func Open(path string) (*gorm.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("创建数据库目录: %w", err)
 	}
-	db, err := gorm.Open(sqlite.Open(path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"), &gorm.Config{})
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("创建数据库文件: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("关闭数据库文件: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return nil, fmt.Errorf("设置数据库权限: %w", err)
+	}
+	gormLogger := logger.New(log.New(os.Stderr, "", log.LstdFlags), logger.Config{
+		LogLevel: logger.Warn, IgnoreRecordNotFoundError: true,
+	})
+	db, err := gorm.Open(
+		sqlite.Open(path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"),
+		&gorm.Config{Logger: gormLogger},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库: %w", err)
 	}
@@ -27,7 +45,20 @@ func Open(path string) (*gorm.DB, error) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
+	if err := secureDatabaseFiles(path); err != nil {
+		_ = sqlDB.Close()
+		return nil, err
+	}
 	return db, nil
+}
+
+func secureDatabaseFiles(path string) error {
+	for _, name := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(name, 0o600); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("设置数据库文件权限: %w", err)
+		}
+	}
+	return nil
 }
 
 func Migrate(db *gorm.DB) error {
