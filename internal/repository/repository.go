@@ -16,6 +16,7 @@ type Repository struct {
 }
 
 var ErrPlaylistNameExists = errors.New("playlist name already exists")
+var ErrSettingsConflict = errors.New("settings version conflict")
 
 func New(db *gorm.DB) *Repository { return &Repository{db: db} }
 
@@ -139,19 +140,38 @@ func (r *Repository) Settings() (model.Settings, error) {
 	if err := r.db.Order("id").First(&row).Error; err != nil {
 		return model.Settings{}, err
 	}
-	return decodeSettings(row.Data)
+	settings, err := decodeSettings(row.Data)
+	settings.Version = row.Version
+	return settings, err
 }
 
-func (r *Repository) SaveSettings(settings model.Settings) error {
-	data, err := encodeSettings(settings)
+func (r *Repository) SaveSettings(settings model.Settings) (model.Settings, error) {
+	updated := settings
+	updated.Version++
+	data, err := encodeSettings(updated)
 	if err != nil {
-		return err
+		return settings, err
 	}
-	var row model.SiteSettings
-	if err := r.db.Order("id").First(&row).Error; err != nil {
-		return err
+	err = r.db.Transaction(func(tx *gorm.DB) error {
+		var row model.SiteSettings
+		if err := tx.Order("id").First(&row).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&model.SiteSettings{}).
+			Where("id = ? AND version = ?", row.ID, settings.Version).
+			Updates(map[string]any{"data": data, "version": updated.Version, "updated_at": time.Now()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrSettingsConflict
+		}
+		return nil
+	})
+	if err != nil {
+		return settings, err
 	}
-	return r.db.Model(&row).Updates(map[string]any{"data": data, "updated_at": time.Now()}).Error
+	return updated, nil
 }
 
 func (r *Repository) Tracks(enabledOnly bool) ([]model.MusicTrack, error) {
@@ -243,12 +263,17 @@ func (r *Repository) DeleteTrack(id uint) error {
 	})
 }
 
-func (r *Repository) HasOtherLocalTrackURL(id uint, url string) (bool, error) {
-	var count int64
+type TrackResourceReference struct {
+	ID        uint
+	URL       string
+	LyricPath string
+}
+
+func (r *Repository) TrackResourceReferences() ([]TrackResourceReference, error) {
+	references := make([]TrackResourceReference, 0)
 	err := r.db.Model(&model.MusicTrack{}).
-		Where("source = ? AND url = ? AND id <> ?", "local", url, id).
-		Count(&count).Error
-	return count > 0, err
+		Select("id, url, lyric_path").Order("id").Find(&references).Error
+	return references, err
 }
 
 func (r *Repository) DeleteS3Tracks(objectKey string) error {
@@ -286,14 +311,34 @@ func (r *Repository) Playlists(enabledOnly, withTracks bool) ([]model.Playlist, 
 	if err := tx.Find(&items).Error; err != nil {
 		return items, err
 	}
-	if withTracks {
-		for i := range items {
-			item, err := r.PlaylistByID(items[i].ID, enabledOnly)
-			if err != nil {
-				return items, err
-			}
-			items[i] = item
-		}
+	if !withTracks || len(items) == 0 {
+		return items, nil
+	}
+	playlistIDs := make([]uint, len(items))
+	playlistIndexes := make(map[uint]int, len(items))
+	for i := range items {
+		items[i].Tracks = make([]model.MusicTrack, 0)
+		playlistIDs[i] = items[i].ID
+		playlistIndexes[items[i].ID] = i
+	}
+	type playlistTrackRow struct {
+		PlaylistID uint
+		model.MusicTrack
+	}
+	rows := make([]playlistTrackRow, 0)
+	trackQuery := r.db.Model(&model.MusicTrack{}).
+		Select("music_tracks.*, playlist_tracks.playlist_id").
+		Joins("JOIN playlist_tracks ON playlist_tracks.track_id = music_tracks.id").
+		Where("playlist_tracks.playlist_id IN ?", playlistIDs)
+	if enabledOnly {
+		trackQuery = trackQuery.Where("music_tracks.enabled = ?", true)
+	}
+	if err := trackQuery.Order("playlist_tracks.playlist_id, playlist_tracks.sort, music_tracks.id").Find(&rows).Error; err != nil {
+		return items, err
+	}
+	for _, row := range rows {
+		index := playlistIndexes[row.PlaylistID]
+		items[index].Tracks = append(items[index].Tracks, row.MusicTrack)
 	}
 	return items, nil
 }
@@ -543,11 +588,27 @@ func defaultPlaylist(tx *gorm.DB) (model.Playlist, error) {
 }
 
 func (r *Repository) loadTrackPlaylistIDs(items []model.MusicTrack) error {
+	if len(items) == 0 {
+		return nil
+	}
+	trackIDs := make([]uint, len(items))
+	trackIndexes := make(map[uint]int, len(items))
 	for i := range items {
 		items[i].PlaylistIDs = make([]uint, 0)
-		if err := r.db.Model(&model.PlaylistTrack{}).Where("track_id = ?", items[i].ID).Order("playlist_id").Pluck("playlist_id", &items[i].PlaylistIDs).Error; err != nil {
-			return err
-		}
+		trackIDs[i] = items[i].ID
+		trackIndexes[items[i].ID] = i
+	}
+	relations := make([]model.PlaylistTrack, 0)
+	if err := r.db.Model(&model.PlaylistTrack{}).
+		Select("track_id, playlist_id").
+		Where("track_id IN ?", trackIDs).
+		Order("track_id, playlist_id").
+		Find(&relations).Error; err != nil {
+		return err
+	}
+	for _, relation := range relations {
+		index := trackIndexes[relation.TrackID]
+		items[index].PlaylistIDs = append(items[index].PlaylistIDs, relation.PlaylistID)
 	}
 	return nil
 }

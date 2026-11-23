@@ -4,9 +4,9 @@ import { Clock3 } from 'lucide-vue-next'
 import AnalogClock from './AnalogClock.vue'
 import MusicPlayer from '@/components/music/MusicPlayer.vue'
 import { useClock } from '@/composables/useClock'
-import type { Settings, Track } from '@/types'
+import type { PublicTrack, Settings } from '@/types'
 
-const props = defineProps<{ settings: Settings; tracks: Track[] }>()
+const props = defineProps<{ settings: Settings; tracks: PublicTrack[] }>()
 const { zonedTime, zonedDate, hands } = useClock(toRef(props, 'settings'))
 </script>
 

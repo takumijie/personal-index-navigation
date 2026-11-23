@@ -38,7 +38,7 @@ docker build -t personal-index-navigation:latest .
 
 ### 2. 启动服务
 
-以下命令使用 Docker 命名卷保存数据库和上传文件。请将示例密码替换为自己的强密码，管理员密码至少为 8 位。
+以下命令使用 Docker 命名卷保存数据库和上传文件。请将示例密码替换为自己的强密码，管理员密码至少为 8 个 Unicode 字符，且 UTF-8 编码不超过 72 字节。
 
 ```bash
 docker volume create homepage-data
@@ -50,6 +50,7 @@ docker run -d \
   -p 8080:8080 \
   -e HOMEPAGE_ADMIN_PASSWORD='replace-with-a-strong-password' \
   -e HOMEPAGE_SERVER_COOKIE_SECURE=false \
+  -e HOMEPAGE_MEDIA_ALLOW_INSECURE_HTTP=true \
   -v homepage-data:/data \
   -v homepage-storage:/storage \
   personal-index-navigation:latest
@@ -61,7 +62,7 @@ docker run -d \
 - 管理后台：`http://localhost:8080/admin`
 - 健康检查：`http://localhost:8080/healthz`
 
-默认管理员用户名为 `admin`，密码为 `HOMEPAGE_ADMIN_PASSWORD` 的值。镜像默认使用 `release` 模式并监听 `0.0.0.0`，所有模式都禁止使用 `admin123`。上面的 `cookie_secure=false` 仅用于直接 HTTP 本地验证；经 Nginx 等反向代理提供 HTTPS 时，应删除该变量或显式设为 `true`，并按实际代理地址配置 `server.trusted_proxies`。
+默认管理员用户名为 `admin`，首次初始化密码为 `HOMEPAGE_ADMIN_PASSWORD` 的值；已有管理员普通重启时可移除该变量，启动配置不会覆盖已有用户名或密码。镜像默认使用 `release` 模式并监听 `0.0.0.0`，所有模式都禁止使用 `admin123`。上面的 `cookie_secure=false` 仅用于直接 HTTP 本地验证；经 Nginx 等反向代理提供 HTTPS 时，应删除该变量或显式设为 `true`，并按实际代理地址配置 `server.trusted_proxies`。
 
 ### 3. 检查运行状态
 
@@ -174,6 +175,9 @@ admin:
 upload:
   max_image_bytes: 10485760
   max_music_bytes: 52428800
+
+media:
+  allow_insecure_http: false
 ```
 
 | 配置项                     | 说明                                                                  |
@@ -186,11 +190,26 @@ upload:
 | `database.path`          | SQLite 数据库文件路径。                                               |
 | `storage.path`           | 图片、音乐、歌词和封面缓存等文件的存储根目录。                        |
 | `admin.username`         | 管理员用户名，默认为 `admin`。                                      |
-| `admin.password`         | 管理员密码，至少 8 位；无内置可用密码，推荐使用环境变量提供。         |
+| `admin.password`         | 首次初始化或密码重置使用的管理员密码，至少 8 个 Unicode 字符且 UTF-8 不超过 72 字节；推荐使用环境变量提供。 |
 | `upload.max_image_bytes` | 单张图片上传大小上限，默认 10 MiB。                                   |
 | `upload.max_music_bytes` | 单个音乐文件上传大小上限，默认 50 MiB。                               |
+| `media.allow_insecure_http` | 是否允许向浏览器返回 HTTP 音频和封面地址，默认 false；仅限受控 HTTP 部署开启。 |
 
-服务启动时会根据启动配置创建或更新管理员账号，因此修改管理员用户名或密码后需要重启服务。
+空库首次启动必须提供合法初始密码；已有管理员后，普通启动不再要求密码，也不会根据启动配置覆盖已有用户名或密码。需要重置时先停止服务，复用同一配置文件或环境变量提供新密码：
+
+```bash
+HOMEPAGE_ADMIN_PASSWORD='replace-with-a-new-strong-password' ./homepage --reset-admin-password
+```
+
+该命令完成数据库迁移后更新管理员哈希、删除所有既有会话并退出，不启动 HTTP 服务。新密码缺失或不合法时不会修改管理员或会话数据。
+
+需要复核曲目本地资源时，先停止服务并备份数据库与 `storage/`，再执行：
+
+```bash
+./homepage --audit-track-resources
+```
+
+该命令复用当前配置，完成数据库迁移后扫描 `storage/music`、`storage/lyrics`、`storage/covers`，向标准输出写入 JSON 报告并退出，不启动 HTTP 服务。报告分类列出孤儿、共享引用、不符合命名规则及非普通文件；它不会删除或修复任何历史文件，也不会执行站点数据初始化。
 
 SQLite 使用 WAL 模式，数据库、`-wal` 和 `-shm` 文件应按 0600 权限保护，备份文件也应采用相同的访问控制。运行中备份请使用 SQLite 在线备份 API 或 `VACUUM INTO`，不要只复制正在写入的单个 DB 文件而遗漏 WAL 内容。
 
@@ -204,14 +223,21 @@ SQLite 使用 WAL 模式，数据库、`-wal` 和 `-shm` 文件应按 0600 权�
 | `HOMEPAGE_SERVER_MODE`    | 覆盖 `server.mode`；Docker 镜像默认设为 `release`。     |
 | `HOMEPAGE_SERVER_LISTEN`  | 覆盖 `server.listen`；Docker 镜像默认设为 `0.0.0.0`。 |
 | `HOMEPAGE_SERVER_PORT`    | 覆盖 `server.port`，范围为 1～65535。                    |
+| `HOMEPAGE_TRUSTED_PROXIES` | 覆盖可信代理列表，多个 IP/CIDR 以逗号分隔。              |
 | `HOMEPAGE_SERVER_COOKIE_SECURE` | 显式覆盖 Cookie Secure；仅受控 HTTP 调试可设为 false。 |
 | `HOMEPAGE_DATABASE_PATH`  | 覆盖数据库路径；Docker 镜像默认设为 `/data/homepage.db`。 |
 | `HOMEPAGE_STORAGE_PATH`   | 覆盖存储路径；Docker 镜像默认设为 `/storage`。            |
-| `HOMEPAGE_ADMIN_PASSWORD` | 覆盖管理员密码，推荐在生产环境使用。                        |
+| `HOMEPAGE_ADMIN_USERNAME` | 覆盖 `admin.username`，仅用于空库首次初始化。            |
+| `HOMEPAGE_ADMIN_PASSWORD` | 覆盖初始化或重置密码，已有管理员普通重启时可移除。        |
+| `HOMEPAGE_UPLOAD_MAX_IMAGE_BYTES` | 覆盖图片上传字节数上限。                          |
+| `HOMEPAGE_UPLOAD_MAX_MUSIC_BYTES` | 覆盖音乐上传字节数上限。                          |
+| `HOMEPAGE_MEDIA_ALLOW_INSECURE_HTTP` | 显式允许 HTTP 浏览器媒体，仅支持 true 或 false。 |
 
-管理员用户名和可信代理通过 YAML 设置。显式设置 `HOMEPAGE_CONFIG` 后，文件缺失、不可读或解析失败都会阻止启动，不会静默回退到默认配置。可将 `config.yaml` 复制为已忽略的 `config.local.yaml` 保存本地私有配置。
+显式设置 `HOMEPAGE_CONFIG` 后，文件缺失、不可读、包含未知字段或解析失败都会阻止启动，不会静默回退到默认配置。可将 `config.yaml` 复制为已忽略的 `config.local.yaml` 保存本地私有配置。
 
 直接 HTTP 本地运行使用 `cookie_secure: false`；生产环境应由 Nginx 等反代提供 HTTPS，并保持 release 默认的 Secure Cookie。服务不会根据客户端提交的 `X-Forwarded-Proto` 自动改变该安全属性。
+
+release 模式默认拒绝向公开播放和封面接口返回 HTTP 媒体地址，避免 HTTPS 页面发生浏览器混合内容拦截；不会把任意 HTTP URL 自动改写为可能不可用的 HTTPS。debug/test 模式保留本机 HTTP 开发兼容。确需在受控 HTTP 环境部署时，同时设置 `HOMEPAGE_SERVER_COOKIE_SECURE=false` 和 `HOMEPAGE_MEDIA_ALLOW_INSECURE_HTTP=true`，不要将兼容开关用于 HTTPS 生产环境。
 
 ### 后台业务配置
 
@@ -264,7 +290,7 @@ API 地址应填写根地址，不要在末尾拼接 `/search`、`/song/url/v1` 
 
 在“音乐管理 → 对象存储”中配置 Endpoint、Region、Bucket、Access Key、Secret、对象前缀、Path Style 和访问模式。支持使用公开地址或预签名地址播放，可直接从对象列表创建或追加播放列表。
 
-Secret 等敏感配置保存在 SQLite 中。请保护数据库备份，并遵循最小权限原则配置对象存储凭据。
+Secret 等敏感配置保存在 SQLite 中。请保护数据库备份，并遵循最小权限原则配置对象存储凭据。普通保存时 Secret 留空表示保留原值；需要撤销已保存凭据时，使用“清除已保存 Secret”并确认。清除后配置处于不完整状态，S3 播放、列举和连接测试会明确失败，直到重新填写并保存 Secret；读取接口不会返回 Secret。
 
 ## 本地开发
 
@@ -278,7 +304,7 @@ Secret 等敏感配置保存在 SQLite 中。请保护数据库备份，并遵�
 
 ### 启动后端
 
-首次克隆且 `web/dist` 不存在时，请先完成下方“构建前端并运行完整站点”中的依赖安装、前端构建和资源同步，再启动后端。
+仓库只跟踪 `web/dist/index.html` 占位入口。启动完整站点前，请先完成下方“构建前端并运行完整站点”中的依赖安装、前端构建和资源同步；仅运行 Go 单元测试不需要这些步骤。
 
 ```powershell
 $env:HOMEPAGE_ADMIN_PASSWORD='replace-with-a-local-strong-password'
@@ -310,7 +336,14 @@ go run ./cmd/server
 
 ## 测试与构建检查
 
-`web/dist` 已被 `.gitignore` 和 `.dockerignore` 忽略，fresh clone 必须先构建并同步前端产物，供 `go:embed` 使用。按以下顺序执行：
+`web/dist` 只跟踪最小的 `index.html` 占位入口，真实 JS、CSS 和 hash bundle 等构建产物仍被 `.gitignore` 和 `.dockerignore` 忽略。Go 路由测试使用独立的内存静态资源夹具，因此干净克隆无需安装 Node.js 或构建前端即可执行：
+
+```powershell
+go test ./...
+go vet ./...
+```
+
+运行或部署完整站点仍须先构建前端并同步真实产物到 `web/dist`；Docker 多阶段构建会自动完成这些步骤。本地前端测试、构建和同步命令如下：
 
 ```powershell
 npm ci --prefix frontend
@@ -318,8 +351,6 @@ npm run test --prefix frontend
 npm run build --prefix frontend
 New-Item -ItemType Directory -Force -Path "web\dist" | Out-Null
 Copy-Item -Path "frontend\dist\*" -Destination "web\dist" -Recurse -Force
-go test ./...
-go vet ./...
 ```
 
 ## 数据持久化与备份

@@ -9,6 +9,7 @@ export const DEFAULT_WATERMARK_SUBTITLE = 'ARCHIVE // CYBERSPACE NODE'
 export const DEFAULT_WATERMARK_CAPTION = 'Connected to Personal Cyberspace'
 
 export const DEFAULT_SETTINGS: Settings = {
+  version: 0,
   site_title: 'Personal Space',
   timezone: 'Asia/Shanghai',
   time_format: '24',

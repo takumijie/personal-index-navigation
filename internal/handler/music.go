@@ -14,7 +14,11 @@ func (a *API) Playlists(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	success(c, items)
+	result := make([]publicPlaylist, 0, len(items))
+	for _, item := range items {
+		result = append(result, newPublicPlaylist(item))
+	}
+	success(c, result)
 }
 
 func (a *API) PublicPlaylistByID(c *gin.Context) {
@@ -27,7 +31,7 @@ func (a *API) PublicPlaylistByID(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	success(c, item)
+	success(c, newPublicPlaylist(item))
 }
 
 func (a *API) Playback(c *gin.Context) {

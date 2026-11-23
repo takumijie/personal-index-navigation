@@ -1,7 +1,8 @@
 # 依赖与构建产物
 node_modules/
 frontend/dist/
-web/dist/
+web/dist/*
+!web/dist/index.html
 coverage/
 
 # 本地运行数据

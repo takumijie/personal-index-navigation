@@ -42,6 +42,70 @@ func TestPublicPlaylistAllowsEmptyAndPreservesDatabaseErrors(t *testing.T) {
 	performJSON(t, app.router, http.MethodGet, "/api/v1/music/playlist", nil, nil, http.StatusInternalServerError)
 }
 
+func TestPublicTrackDTOsHideInternalFieldsAndAdminKeepsFullModels(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.db.Exec("UPDATE playlists SET enabled = ?", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	cookie := login(t, app.router)
+	playlist := responseData[model.Playlist](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/playlists/create", model.Playlist{
+		Name: "Public DTO", Sort: 1, Enabled: true,
+	}, cookie, http.StatusOK))
+	track := responseData[model.MusicTrack](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/tracks/create", model.MusicTrack{
+		Title: "Public", Artist: "Artist", Album: "Album", Cover: "https://example.com/cover.jpg",
+		URL: "/storage/music/0123456789abcdef0123456789abcdef.mp3", Source: "local",
+		ExternalID: "internal-external-id", ObjectKey: "internal/object-key",
+		LyricPath: "/storage/lyrics/fedcba9876543210fedcba9876543210.lrc",
+		Sort:      7, Enabled: true, PlaylistIDs: []uint{playlist.ID},
+	}, cookie, http.StatusOK))
+
+	adminTracks := responseData[[]model.MusicTrack](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/tracks/list", nil, cookie, http.StatusOK))
+	if len(adminTracks) != 1 || adminTracks[0].URL != track.URL || adminTracks[0].ExternalID != track.ExternalID ||
+		adminTracks[0].ObjectKey != track.ObjectKey || adminTracks[0].LyricPath != track.LyricPath {
+		t.Fatalf("管理端曲目完整字段丢失: %+v", adminTracks)
+	}
+
+	assertTracks := func(t *testing.T, tracks []map[string]any) {
+		t.Helper()
+		if len(tracks) != 1 {
+			t.Fatalf("公开播放列表曲目数量错误: %+v", tracks)
+		}
+		item := tracks[0]
+		expected := []string{"id", "title", "artist", "album", "cover", "source", "sort", "enabled"}
+		if len(item) != len(expected) {
+			t.Fatalf("公开曲目字段集合错误: %+v", item)
+		}
+		for _, key := range expected {
+			if _, ok := item[key]; !ok {
+				t.Errorf("公开曲目缺少字段 %q: %+v", key, item)
+			}
+		}
+		if id, ok := item["id"].(float64); !ok || uint(id) != track.ID {
+			t.Errorf("公开曲目 ID 错误: %+v", item["id"])
+		}
+	}
+	for _, route := range []string{"/api/v1/music/tracks", "/api/v1/music/playlist"} {
+		t.Run(route, func(t *testing.T) {
+			assertTracks(t, responseData[[]map[string]any](t, performJSON(t, app.router, http.MethodGet, route, nil, nil, http.StatusOK)))
+		})
+	}
+	t.Run("/api/v1/music/playlists", func(t *testing.T) {
+		items := responseData[[]struct {
+			Tracks []map[string]any `json:"tracks"`
+		}](t, performJSON(t, app.router, http.MethodGet, "/api/v1/music/playlists", nil, nil, http.StatusOK))
+		if len(items) != 1 {
+			t.Fatalf("公开播放列表数量错误: %+v", items)
+		}
+		assertTracks(t, items[0].Tracks)
+	})
+	t.Run("/api/v1/music/playlists/:id", func(t *testing.T) {
+		item := responseData[struct {
+			Tracks []map[string]any `json:"tracks"`
+		}](t, performJSON(t, app.router, http.MethodGet, fmt.Sprintf("/api/v1/music/playlists/%d", playlist.ID), nil, nil, http.StatusOK))
+		assertTracks(t, item.Tracks)
+	})
+}
+
 func TestPublicPlaybackRateLimitIncludesMissingTracks(t *testing.T) {
 	app := newTestApp(t)
 	for range 120 {

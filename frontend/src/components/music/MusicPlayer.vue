@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Music2, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-vue-next'
 import { publicApi } from '@/api'
-import type { MusicSettings, Track } from '@/types'
+import type { MusicSettings, PublicTrack } from '@/types'
 import { findCurrentLrcLine, parseLrc, type LrcLine } from '@/utils/lrc'
 import { playbackNeedsRefresh as playbackExpired } from '@/utils/playback'
 
@@ -25,9 +25,9 @@ function readPlaybackMode(): PlaybackMode {
   }
 }
 
-const props = defineProps<{ tracks: Track[]; settings: MusicSettings }>()
+const props = defineProps<{ tracks: PublicTrack[]; settings: MusicSettings }>()
 const audio = ref<HTMLAudioElement | null>(null)
-const enabledTracks = ref<Track[]>([])
+const enabledTracks = ref<PublicTrack[]>([])
 const currentIndex = ref(0)
 const playing = ref(false)
 const currentTime = ref(0)
@@ -55,7 +55,7 @@ let playRequested = false
 let autoRetryUsed = false
 let pendingSeek: { serial: number; time: number } | null = null
 
-function sortedTracks(tracks: Track[]) {
+function sortedTracks(tracks: PublicTrack[]) {
   return tracks.filter((track) => track.enabled).sort((a, b) => a.sort - b.sort)
 }
 
@@ -68,7 +68,7 @@ function formatTime(value: number) {
   return `${Math.floor(value / 60)}:${Math.floor(value % 60).toString().padStart(2, '0')}`
 }
 
-async function loadLyrics(track: Track, serial: number) {
+async function loadLyrics(track: PublicTrack, serial: number) {
   if (!props.settings.lyrics_enabled) return
   try {
     const result = await publicApi.lyrics(track.id)
@@ -102,7 +102,7 @@ function playbackNeedsRefresh(serial: number): boolean {
   return playbackExpired(playbackExpiresAt)
 }
 
-async function requestPlaybackAndPlay(track: Track, serial: number) {
+async function requestPlaybackAndPlay(track: PublicTrack, serial: number) {
   if (pendingPlaybackSerial === serial) return
   if (!playbackNeedsRefresh(serial)) {
     await playLoadedAudio(serial)

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, toRaw } from 'vue'
 import { Save } from 'lucide-vue-next'
 import { adminApi, publicApi } from '@/api'
-import { errorMessage } from '@/api/client'
+import { ApiError, errorMessage } from '@/api/client'
 import { DEFAULT_SETTINGS, DEFAULT_WATERMARK_CAPTION, DEFAULT_WATERMARK_SUBTITLE, DEFAULT_WATERMARK_TITLE } from '@/data/defaults'
 import type { Settings } from '@/types'
 import { validClockTime, validTimezone, validWebUrl } from '@/utils/validation'
@@ -14,6 +14,7 @@ import PanelShell from '@/components/common/PanelShell.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 
 const form = ref<Settings>(structuredClone(DEFAULT_SETTINGS))
+const conflict = ref<Settings | null>(null)
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -50,10 +51,35 @@ async function save() {
   if (!validate()) return
   saving.value = true
   try {
-    const latest = await publicApi.settings()
-    form.value = await adminApi.updateSettings({ ...form.value, music: latest.music })
+    form.value = await adminApi.updateSettings(form.value)
+    conflict.value = null
     success.value = '站点设置已保存，主页将在下次加载时应用'
-  } catch (reason) { error.value = errorMessage(reason) } finally { saving.value = false }
+  } catch (reason) {
+    if (reason instanceof ApiError && reason.status === 409) {
+      try {
+        conflict.value = await publicApi.settings()
+        error.value = '设置已被其他页面修改。你的编辑仍保留，请核对服务器最新设置后再重试。'
+      } catch (refreshReason) {
+        error.value = `${errorMessage(reason)}；获取最新设置失败：${errorMessage(refreshReason)}`
+      }
+    } else {
+      error.value = errorMessage(reason)
+    }
+  } finally { saving.value = false }
+}
+
+async function retryWithLatest() {
+  if (!conflict.value) return
+  form.value = { ...form.value, version: conflict.value.version, music: { ...conflict.value.music } }
+  await save()
+}
+
+function loadLatest() {
+  if (!conflict.value) return
+  form.value = structuredClone(toRaw(conflict.value))
+  conflict.value = null
+  error.value = ''
+  success.value = '已载入服务器最新设置，原编辑已放弃'
 }
 </script>
 
@@ -63,6 +89,17 @@ async function save() {
     <LoadingSpinner v-if="loading" label="正在加载设置…" class="py-10 text-white/40" />
     <template v-else>
       <AlertMessage :message="error" type="error" /><AlertMessage :message="success" type="success" />
+      <section v-if="conflict" class="mb-5 rounded-xl border border-amber-300/15 bg-amber-400/[0.05] p-4 text-xs text-amber-100/80" data-testid="settings-conflict">
+        <p>服务器最新版本为 {{ conflict.version }}，当前表单中的编辑尚未覆盖它。</p>
+        <details class="mt-3">
+          <summary class="cursor-pointer text-amber-100">查看服务器最新设置</summary>
+          <pre class="mt-3 max-h-64 overflow-auto rounded-lg bg-black/20 p-3 text-[10px] leading-4 text-white/55">{{ JSON.stringify(conflict, null, 2) }}</pre>
+        </details>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button class="secondary-button" type="button" :disabled="saving" @click="loadLatest">载入最新设置</button>
+          <button class="primary-button" type="button" :disabled="saving" @click="retryWithLatest">保留当前编辑并重试</button>
+        </div>
+      </section>
       <form class="space-y-8" @submit.prevent="save">
         <section>
           <h3 class="mb-4 text-xs font-semibold tracking-wider text-violet-200/65">基础与时钟</h3>

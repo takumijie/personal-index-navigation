@@ -17,10 +17,15 @@ type ContentService struct {
 	repo           *repository.Repository
 	uploads        *UploadService
 	guestbookLimit *IPRateLimiter
+	mediaPolicy    MediaPolicy
 }
 
 func NewContentService(repo *repository.Repository, uploads *UploadService) *ContentService {
 	return &ContentService{repo: repo, uploads: uploads, guestbookLimit: NewIPRateLimiter(5, time.Minute)}
+}
+
+func (s *ContentService) SetMediaPolicy(policy MediaPolicy) {
+	s.mediaPolicy = policy
 }
 
 func (s *ContentService) Profile() (model.SiteProfile, error) { return s.repo.Profile() }
@@ -189,16 +194,20 @@ func (s *ContentService) DeleteGuestbook(id uint) error {
 
 func (s *ContentService) Settings() (model.Settings, error) { return s.repo.Settings() }
 
-func (s *ContentService) UpdateSettings(settings model.Settings) error {
+func (s *ContentService) UpdateSettings(settings model.Settings) (model.Settings, error) {
 	if err := validateSettings(settings); err != nil {
-		return err
+		return settings, err
 	}
 	if settings.Music.PlaylistID != 0 {
 		if _, err := s.PlaylistByID(settings.Music.PlaylistID, true); err != nil {
-			return err
+			return settings, err
 		}
 	}
-	return s.repo.SaveSettings(settings)
+	updated, err := s.repo.SaveSettings(settings)
+	if errors.Is(err, repository.ErrSettingsConflict) {
+		return settings, failure(http.StatusConflict, "settings_conflict", "设置已被其他页面修改，请核对最新设置后重试")
+	}
+	return updated, err
 }
 
 func (s *ContentService) Tracks(enabledOnly bool) ([]model.MusicTrack, error) {
@@ -211,6 +220,9 @@ func (s *ContentService) CreateTrack(item model.MusicTrack) (model.MusicTrack, e
 		return item, invalid("请使用本地、网易云或 S3 来源创建曲目")
 	}
 	if err := validateTrack(item); err != nil {
+		return item, err
+	}
+	if err := s.validateLyricFile(item.LyricPath); err != nil {
 		return item, err
 	}
 	return item, s.repo.SaveTrack(&item)
@@ -227,8 +239,23 @@ func (s *ContentService) UpdateTrack(id uint, item model.MusicTrack) (model.Musi
 	if err := validateTrack(item); err != nil {
 		return item, err
 	}
+	if err := s.validateLyricFile(item.LyricPath); err != nil {
+		return item, err
+	}
+	if item.Source == "remote" {
+		if err := s.mediaPolicy.ValidatePlaybackURL(item.URL); err != nil {
+			return item, err
+		}
+		if httpURL(item.Cover) && !s.mediaPolicy.AllowBrowserURL(item.Cover) {
+			return item, invalid("HTTPS 部署不能使用 HTTP 封面地址；请改用 HTTPS 或显式允许不安全媒体")
+		}
+	}
 	item.ID, item.CreatedAt = current.ID, current.CreatedAt
-	return item, s.repo.SaveTrack(&item)
+	if err := s.repo.SaveTrack(&item); err != nil {
+		return item, err
+	}
+	s.cleanupReplacedResources(current, item)
+	return item, nil
 }
 
 func (s *ContentService) DeleteTrack(id uint) error {
@@ -239,13 +266,17 @@ func (s *ContentService) DeleteTrack(id uint) error {
 	if err != nil {
 		return err
 	}
+	var references []repository.TrackResourceReference
 	switch track.Source {
 	case "local":
-		shared, err := s.repo.HasOtherLocalTrackURL(track.ID, track.URL)
+		if err := validateLocalMusicPath(s.uploads.root, track.URL); err != nil {
+			return err
+		}
+		references, err = s.repo.TrackResourceReferences()
 		if err != nil {
 			return err
 		}
-		if !shared {
+		if !resourceReferenced(references, track.URL, track.ID) {
 			if err := s.uploads.DeleteMusic(track.URL); err != nil {
 				return err
 			}
@@ -256,7 +287,11 @@ func (s *ContentService) DeleteTrack(id uint) error {
 	default:
 		return invalid("曲目来源无效")
 	}
-	return s.repo.DeleteTrack(id)
+	if err := s.repo.DeleteTrack(id); err != nil {
+		return err
+	}
+	s.cleanupDeletedResources(track, references)
+	return nil
 }
 
 func (s *ContentService) Playlist() (model.Playlist, error) {

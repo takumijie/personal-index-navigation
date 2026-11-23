@@ -3,6 +3,7 @@ package middleware
 import (
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,10 @@ import (
 
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if c.Request.URL.Path == "/healthz" || c.Request.URL.Path == "/api/v1/health" {
+			c.Next()
+			return
+		}
 		start := time.Now()
 		c.Next()
 		slog.Info("HTTP 请求", "method", c.Request.Method, "path", c.Request.URL.Path,
@@ -19,7 +24,7 @@ func Logger() gin.HandlerFunc {
 
 func Recovery() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		slog.Error("HTTP 请求发生 panic", "error", recovered, "path", c.Request.URL.Path)
+		slog.Error("HTTP 请求发生 panic", "error", recovered, "path", c.Request.URL.Path, "stack", string(debug.Stack()))
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "internal_error", "message": "服务器内部错误"}})
 	})
 }

@@ -15,6 +15,7 @@ const emptyConfig = (): S3Config => ({
   bucket: '',
   access_key_id: '',
   secret_access_key: '',
+  clear_secret: false,
   prefix: '',
   force_path_style: false,
   public_base_url: '',
@@ -48,9 +49,24 @@ const deletingKey = ref('')
 
 const allCurrentSelected = computed(() => objects.value.length > 0 && objects.value.every((object) => isSelected(object)))
 const objectActionBusy = computed(() => importing.value || appending.value || deletingKey.value !== '')
+const hasInsecureBrowserURL = computed(() => form.value.public_base_url.startsWith('http://') || (form.value.access_mode === 'presigned' && form.value.endpoint.startsWith('http://')))
 
 function applyConfig(config: S3Config) {
-  form.value = { ...emptyConfig(), ...config, secret_access_key: '' }
+  form.value = { ...emptyConfig(), ...config, secret_access_key: '', clear_secret: false }
+}
+
+function configPayload(clearSecret = false): S3Config {
+  return {
+    ...form.value,
+    endpoint: form.value.endpoint.trim(),
+    region: form.value.region.trim(),
+    bucket: form.value.bucket.trim(),
+    access_key_id: form.value.access_key_id.trim(),
+    prefix: form.value.prefix.trim(),
+    public_base_url: form.value.public_base_url.trim(),
+    secret_access_key: clearSecret ? '' : form.value.secret_access_key || '',
+    clear_secret: clearSecret,
+  }
 }
 
 async function loadPlaylists() {
@@ -98,19 +114,26 @@ async function save() {
   }
   saving.value = true
   try {
-    const payload: S3Config = {
-      ...form.value,
-      endpoint: form.value.endpoint.trim(),
-      region: form.value.region.trim(),
-      bucket: form.value.bucket.trim(),
-      access_key_id: form.value.access_key_id.trim(),
-      prefix: form.value.prefix.trim(),
-      public_base_url: form.value.public_base_url.trim(),
-      secret_access_key: form.value.secret_access_key || '',
-    }
-    applyConfig(await adminApi.saveS3Config(payload))
+    applyConfig(await adminApi.saveS3Config(configPayload()))
     resetObjects()
     success.value = 'S3 配置已保存；连接测试与对象列表将使用已保存配置'
+  } catch (reason) {
+    error.value = errorMessage(reason)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function clearSavedSecret() {
+  if (!form.value.has_secret || saving.value) return
+  if (!window.confirm('确定清除已保存的 Secret 吗？清除后 S3 不可用，直到重新填写并保存新的 Secret。')) return
+  error.value = ''
+  success.value = ''
+  saving.value = true
+  try {
+    applyConfig(await adminApi.saveS3Config(configPayload(true)))
+    resetObjects()
+    success.value = '已清除保存的 Secret；S3 不可用，直到重新填写并保存新的 Secret'
   } catch (reason) {
     error.value = errorMessage(reason)
   } finally {
@@ -295,18 +318,21 @@ onMounted(load)
 
       <AlertMessage :message="error" type="error" />
       <AlertMessage :message="success" type="success" />
+      <AlertMessage v-if="hasInsecureBrowserURL" message="当前配置会生成 HTTP 播放地址。release 模式默认拒绝播放，请改用已验证支持 HTTPS 的 Endpoint / Public Base URL；受控 HTTP 部署需显式开启媒体兼容开关。" type="warning" />
       <LoadingSpinner v-if="loading" label="正在加载 S3 配置…" class="py-10 text-white/40" />
       <form v-else class="grid gap-4 min-[760px]:grid-cols-2" @submit.prevent="save">
         <div class="min-[760px]:col-span-2"><FormField label="Endpoint"><input v-model="form.endpoint" class="field" type="url" placeholder="https://s3.example.com" autocomplete="off" /></FormField></div>
-        <FormField label="Region"><input v-model="form.region" class="field" placeholder="us-east-1" autocomplete="off" /></FormField>
-        <FormField label="Bucket"><input v-model="form.bucket" class="field" placeholder="my-music" autocomplete="off" /></FormField>
-        <FormField label="Access Key ID"><input v-model="form.access_key_id" class="field" autocomplete="off" /></FormField>
+        <FormField label="Region"><input v-model="form.region" class="field" maxlength="128" placeholder="us-east-1" autocomplete="off" /></FormField>
+        <FormField label="Bucket"><input v-model="form.bucket" class="field" maxlength="128" placeholder="my-music" autocomplete="off" /></FormField>
+        <FormField label="Access Key ID"><input v-model="form.access_key_id" class="field" maxlength="256" autocomplete="off" /></FormField>
         <FormField label="Secret Access Key" :hint="form.has_secret ? '已保存 Secret；留空保留原值' : '尚未保存 Secret'">
-          <input v-model="form.secret_access_key" class="field" type="password" :placeholder="form.has_secret ? '留空以保留原值' : '请输入 Secret Access Key'" autocomplete="new-password" />
+          <input v-model="form.secret_access_key" class="field" type="password" maxlength="512" :placeholder="form.has_secret ? '留空以保留原值' : '请输入 Secret Access Key'" autocomplete="new-password" />
+          <button v-if="form.has_secret" class="secondary-button mt-2" type="button" :disabled="saving || testing" @click="clearSavedSecret"><Trash2 :size="14" />清除已保存 Secret</button>
+          <p v-if="form.has_secret" class="mt-2 text-[11px] text-white/30">清除后 S3 不可用，直到重新填写并保存新的 Secret。</p>
         </FormField>
-        <FormField label="配置前缀" hint="可选，自动附加到对象查询前缀前"><input v-model="form.prefix" class="field" placeholder="music/" /></FormField>
+        <FormField label="配置前缀" hint="可选，自动附加到对象查询前缀前"><input v-model="form.prefix" class="field" maxlength="1024" placeholder="music/" /></FormField>
         <FormField label="访问模式"><select v-model="form.access_mode" class="field"><option value="presigned">预签名 URL</option><option value="public">公开 URL</option></select></FormField>
-        <div class="min-[760px]:col-span-2"><FormField label="Public Base URL" :hint="form.access_mode === 'public' ? '公开访问模式必填' : '仅公开访问模式使用'"><input v-model="form.public_base_url" class="field" type="url" placeholder="https://cdn.example.com" /></FormField></div>
+        <div class="min-[760px]:col-span-2"><FormField label="Public Base URL" :hint="form.access_mode === 'public' ? '公开访问模式必填' : '仅公开访问模式使用'"><input v-model="form.public_base_url" class="field" type="url" maxlength="2048" placeholder="https://cdn.example.com" /></FormField></div>
         <div class="rounded-xl border border-white/[0.06] bg-black/10 px-4 py-3 min-[760px]:col-span-2"><ToggleSwitch v-model="form.force_path_style" label="使用 Path-Style 地址" /></div>
       </form>
     </section>
@@ -323,7 +349,7 @@ onMounted(load)
       <AlertMessage :message="objectSuccess" type="success" />
 
       <form class="flex flex-col gap-2 min-[560px]:flex-row" @submit.prevent="loadObjects(0, true)">
-        <input v-model="objectPrefix" class="field" placeholder="对象查询前缀，例如 albums/（可选）" />
+        <input v-model="objectPrefix" class="field" maxlength="1024" placeholder="对象查询前缀，例如 albums/（可选）" />
         <button class="secondary-button shrink-0" type="submit" :disabled="objectsLoading"><RefreshCw :size="14" />{{ objectsLoading ? '读取中…' : '读取对象' }}</button>
       </form>
 
@@ -362,7 +388,7 @@ onMounted(load)
           <form class="space-y-2" @submit.prevent="importSelected">
             <label class="block text-xs text-white/45" for="s3-import-name">创建新列表导入</label>
             <div class="flex flex-col gap-2 min-[560px]:flex-row min-[900px]:flex-col min-[1100px]:flex-row">
-              <input id="s3-import-name" v-model="importName" class="field" placeholder="新播放列表名称" maxlength="80" />
+              <input id="s3-import-name" v-model="importName" class="field" placeholder="新播放列表名称" maxlength="100" />
               <button class="primary-button shrink-0" type="submit" :disabled="objectActionBusy || !selectedObjects.length"><Download :size="14" />{{ importing ? '导入中…' : `创建列表（${selectedObjects.length}）` }}</button>
             </div>
           </form>

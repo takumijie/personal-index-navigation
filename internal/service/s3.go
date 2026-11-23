@@ -34,6 +34,7 @@ type S3Config struct {
 	Bucket          string `json:"bucket"`
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
+	ClearSecret     bool   `json:"clear_secret"`
 	Prefix          string `json:"prefix"`
 	ForcePathStyle  bool   `json:"force_path_style"`
 	PublicBaseURL   string `json:"public_base_url"`
@@ -84,11 +85,13 @@ func (s *S3Service) SaveConfig(config S3Config) error {
 	if err := s.repo.ProviderConfig(s3Provider, &current); err != nil {
 		return err
 	}
-	if config.SecretAccessKey == "" {
+	if config.ClearSecret {
+		config.SecretAccessKey = ""
+	} else if config.SecretAccessKey == "" {
 		config.SecretAccessKey = current.SecretAccessKey
 	}
 	normalizeS3Config(&config)
-	if err := validateS3Config(config); err != nil {
+	if err := validateS3Config(config, !config.ClearSecret); err != nil {
 		return err
 	}
 	return s.repo.SaveProviderConfig(s3Provider, config)
@@ -330,8 +333,8 @@ func (s *S3Service) loadConfig() (S3Config, error) {
 	if err := s.repo.ProviderConfig(s3Provider, &config); err != nil {
 		return config, err
 	}
-	if err := validateS3Config(config); err != nil {
-		return config, err
+	if err := validateS3Config(config, true); err != nil {
+		return config, failure(http.StatusServiceUnavailable, "provider_not_configured", "S3 配置不完整或无效，请先在后台完善配置")
 	}
 	return config, nil
 }
@@ -369,10 +372,14 @@ func normalizeS3Config(config *S3Config) {
 	}
 }
 
-func validateS3Config(config S3Config) error {
+func validateS3Config(config S3Config, requireSecret bool) error {
+	validSecret := required(config.SecretAccessKey, 512)
+	if !requireSecret && config.SecretAccessKey == "" {
+		validSecret = true
+	}
 	if !validS3URL(config.Endpoint) || !required(config.Region, 128) || !required(config.Bucket, 128) ||
 		strings.ContainsAny(config.Bucket, `/\`) || !required(config.AccessKeyID, 256) ||
-		!required(config.SecretAccessKey, 512) || !validS3Prefix(config.Prefix) || !oneOf(config.AccessMode, "public", "presigned") {
+		!validSecret || !validS3Prefix(config.Prefix) || !oneOf(config.AccessMode, "public", "presigned") {
 		return invalid("S3 配置不完整或无效")
 	}
 	if config.PublicBaseURL != "" && (!validLength(config.PublicBaseURL, 2048) || !validS3URL(config.PublicBaseURL)) {

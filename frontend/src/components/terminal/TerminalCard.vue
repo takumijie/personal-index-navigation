@@ -99,7 +99,7 @@ watch(() => props.active, (active) => {
             v-model="input"
             type="text"
             class="relative z-10 w-full border-0 bg-transparent p-0 font-mono text-transparent caret-transparent outline-none disabled:opacity-60"
-            :maxlength="Math.max(settings.guestbook_max_length, 1000)"
+            :maxlength="settings.guestbook_max_length ?? 1000"
             :disabled="submitting"
             autocomplete="off"
             autocapitalize="off"

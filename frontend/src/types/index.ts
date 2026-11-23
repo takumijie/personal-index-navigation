@@ -65,6 +65,7 @@ export interface MusicSettings {
 }
 
 export interface Settings {
+  version: number
   site_title: string
   timezone: string
   time_format: '12' | '24'
@@ -96,12 +97,31 @@ export interface Track {
   playlist_ids?: number[]
 }
 
+export interface PublicTrack {
+  id: number
+  title: string
+  artist: string
+  album: string
+  cover: string
+  source: TrackSource
+  sort: number
+  enabled: boolean
+}
+
 export interface Playlist {
   id: number
   name: string
   sort: number
   enabled: boolean
   tracks: Track[]
+}
+
+export interface PublicPlaylist {
+  id: number
+  name: string
+  sort: number
+  enabled: boolean
+  tracks: PublicTrack[]
 }
 
 export interface Playback {
@@ -154,6 +174,7 @@ export interface S3Config {
   bucket: string
   access_key_id: string
   secret_access_key?: string
+  clear_secret?: boolean
   prefix: string
   force_path_style: boolean
   public_base_url: string

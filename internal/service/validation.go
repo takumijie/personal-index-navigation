@@ -103,7 +103,7 @@ func validateTrack(item model.MusicTrack) error {
 			return invalid("曲目信息包含控制字符")
 		}
 	}
-	if !resourceURL(item.Cover, false) || !validLength(item.URL, 2048) || !validLength(item.Cover, 2048) || !resourceURL(item.LyricPath, false) {
+	if !resourceURL(item.Cover, false) || !validLength(item.URL, 2048) || !validLength(item.Cover, 2048) || !validLyricResourcePath(item.LyricPath) {
 		return invalid("曲目、封面或歌词地址无效")
 	}
 	if item.Sort < 0 || item.Sort > 1000000 {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -53,10 +54,30 @@ type MusicProvider interface {
 	Lyrics(context.Context, model.MusicTrack) (string, error)
 }
 
+type MediaPolicy struct {
+	AllowInsecureHTTP bool
+}
+
+func (p MediaPolicy) AllowBrowserURL(value string) bool {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return parsed.Scheme == "https" || (parsed.Scheme == "http" && p.AllowInsecureHTTP)
+}
+
+func (p MediaPolicy) ValidatePlaybackURL(value string) error {
+	if !p.AllowBrowserURL(value) {
+		return failure(http.StatusUnprocessableEntity, "playback_unavailable", "媒体地址必须使用 HTTPS；受控 HTTP 部署可显式允许不安全媒体")
+	}
+	return nil
+}
+
 type MusicService struct {
 	repo          *repository.Repository
 	root          string
 	providers     map[string]MusicProvider
+	mediaPolicy   MediaPolicy
 	limit         *IPRateLimiter
 	playbackLimit *IPRateLimiter
 	lyricsLimit   *IPRateLimiter
@@ -78,6 +99,10 @@ func (s *MusicService) RegisterProvider(source string, provider MusicProvider) {
 	s.providers[source] = provider
 }
 
+func (s *MusicService) SetMediaPolicy(policy MediaPolicy) {
+	s.mediaPolicy = policy
+}
+
 func (s *MusicService) Allow(ip string) bool { return s.limit.Allow(ip) }
 
 func (s *MusicService) AllowPlayback(ip string) bool { return s.playbackLimit.Allow(ip) }
@@ -92,14 +117,26 @@ func (s *MusicService) Playback(ctx context.Context, id uint) (Playback, error) 
 		return Playback{}, err
 	}
 	switch track.Source {
-	case "local", "remote":
+	case "local":
+		return Playback{URL: track.URL}, nil
+	case "remote":
+		if err := s.mediaPolicy.ValidatePlaybackURL(track.URL); err != nil {
+			return Playback{}, err
+		}
 		return Playback{URL: track.URL}, nil
 	default:
 		provider, ok := s.providers[track.Source]
 		if !ok {
 			return Playback{}, failure(http.StatusServiceUnavailable, "provider_unavailable", "音乐来源尚未配置")
 		}
-		return provider.Playback(ctx, track)
+		playback, err := provider.Playback(ctx, track)
+		if err != nil {
+			return Playback{}, err
+		}
+		if err := s.mediaPolicy.ValidatePlaybackURL(playback.URL); err != nil {
+			return Playback{}, err
+		}
+		return playback, nil
 	}
 }
 
@@ -151,9 +188,9 @@ func (s *MusicService) neteaseCover(ctx context.Context, track model.MusicTrack)
 		}
 		return Cover{}, err
 	}
-	if !httpURL(cover) {
+	if !s.mediaPolicy.AllowBrowserURL(cover) {
 		s.markCoverMissing(track.ID)
-		return Cover{}, notFound("封面不存在")
+		return Cover{}, notFound("封面不存在或地址不受当前媒体安全策略支持")
 	}
 	if err := s.repo.FillTrackCoverIfEmpty(track.ID, cover); err != nil {
 		return Cover{}, err
@@ -173,6 +210,9 @@ func (s *MusicService) Cover(ctx context.Context, id uint) (Cover, error) {
 		return Cover{}, err
 	}
 	if httpURL(track.Cover) && oneOf(track.Source, "netease", "remote") {
+		if !s.mediaPolicy.AllowBrowserURL(track.Cover) {
+			return Cover{}, notFound("封面地址不受当前媒体安全策略支持")
+		}
 		return Cover{URL: track.Cover}, nil
 	}
 	if track.Source == "netease" {
@@ -308,11 +348,14 @@ func (s *MusicService) publicTrack(id uint) (model.MusicTrack, error) {
 }
 
 func (s *MusicService) localLyrics(resource string) (string, error) {
-	name := filepath.Base(resource)
-	if name == "." || name == "" || resource != "/storage/lyrics/"+name {
-		return "", invalid("歌词路径无效")
+	filename, err := regularLocalResourcePath(s.root, "lyrics", resource)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
 	}
-	file, err := os.Open(filepath.Join(s.root, "lyrics", name))
+	if err != nil {
+		return "", err
+	}
+	file, err := os.Open(filename)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}

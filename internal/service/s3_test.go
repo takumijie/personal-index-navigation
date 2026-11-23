@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -236,5 +238,90 @@ func TestS3DeleteObjectDatabaseFailureSkipsOSS(t *testing.T) {
 	}
 	if _, err := repo.TrackByID(track.ID); err != nil {
 		t.Fatalf("数据库删除事务失败后曲目应保留: %v", err)
+	}
+}
+
+func TestS3ClearSecretPersistenceAndRecovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	repo := providerTestRepository(t)
+	provider := NewS3Service(repo, server.Client())
+	config := S3Config{
+		Endpoint: server.URL, Region: "auto", Bucket: "music", AccessKeyID: "access",
+		SecretAccessKey: "old-secret", Prefix: "music", ForcePathStyle: true, AccessMode: "presigned",
+	}
+	if err := provider.SaveConfig(config); err != nil {
+		t.Fatal(err)
+	}
+
+	config.SecretAccessKey = "must-not-be-persisted"
+	config.ClearSecret = true
+	if err := provider.SaveConfig(config); err != nil {
+		t.Fatalf("显式清除 Secret 时应允许保存不完整配置: %v", err)
+	}
+	var stored S3Config
+	if err := repo.ProviderConfig(s3Provider, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.SecretAccessKey != "" {
+		t.Fatalf("显式清除后 Secret 仍被持久化: %q", stored.SecretAccessKey)
+	}
+
+	provider = NewS3Service(repo, server.Client())
+	read, err := provider.ReadConfig()
+	if err != nil || read.HasSecret {
+		t.Fatalf("重新构造服务后不应恢复 Secret: %+v, %v", read, err)
+	}
+	encoded, err := json.Marshal(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("secret_access_key")) {
+		t.Fatalf("读取 DTO 不应包含 Secret 字段: %s", encoded)
+	}
+
+	operations := map[string]func() error{
+		"test": func() error { return provider.Test(context.Background()) },
+		"list": func() error {
+			_, err := provider.ListObjects(context.Background(), "", "")
+			return err
+		},
+		"playback": func() error {
+			_, err := provider.Playback(context.Background(), model.MusicTrack{Source: s3Provider, ObjectKey: "music/song.mp3"})
+			return err
+		},
+	}
+	for name, operation := range operations {
+		err := operation()
+		var serviceErr *Error
+		if !errors.As(err, &serviceErr) || serviceErr.Code != "provider_not_configured" {
+			t.Fatalf("清除 Secret 后 %s 应明确报告未完整配置: %v", name, err)
+		}
+	}
+
+	config.SecretAccessKey = "new-secret"
+	config.ClearSecret = false
+	if err := provider.SaveConfig(config); err != nil {
+		t.Fatalf("重新填写 Secret 后应可保存: %v", err)
+	}
+	if err := repo.ProviderConfig(s3Provider, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.SecretAccessKey != "new-secret" {
+		t.Fatalf("重新填写的新 Secret 未持久化: %q", stored.SecretAccessKey)
+	}
+	read, err = provider.ReadConfig()
+	if err != nil || !read.HasSecret {
+		t.Fatalf("重新填写后 has_secret 应恢复: %+v, %v", read, err)
+	}
+	if err := provider.Test(context.Background()); err != nil {
+		t.Fatalf("重新填写 Secret 后运行操作应恢复: %v", err)
 	}
 }

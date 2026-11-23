@@ -2,7 +2,7 @@ import { onMounted, ref } from 'vue'
 import { publicApi } from '@/api'
 import { errorMessage } from '@/api/client'
 import { DEFAULT_SETTINGS } from '@/data/defaults'
-import type { Device, GuestbookEntry, NavigationItem, Profile, Settings, Track, Visitor } from '@/types'
+import type { Device, GuestbookEntry, NavigationItem, Profile, PublicTrack, Settings, Visitor } from '@/types'
 
 export function useHomeData() {
   const profile = ref<Profile | null>(null)
@@ -10,7 +10,7 @@ export function useHomeData() {
   const devices = ref<Device[]>([])
   const settings = ref<Settings>(structuredClone(DEFAULT_SETTINGS))
   const guestbook = ref<GuestbookEntry[]>([])
-  const tracks = ref<Track[]>([])
+  const tracks = ref<PublicTrack[]>([])
   const visitor = ref<Visitor | null>(null)
   const loading = ref(true)
   const error = ref('')
@@ -41,7 +41,7 @@ export function useHomeData() {
     return terminalDataTask
   }
 
-  async function loadTracks(): Promise<Track[]> {
+  async function loadTracks(): Promise<PublicTrack[]> {
     try {
       return await publicApi.playlist()
     } catch (reason) {

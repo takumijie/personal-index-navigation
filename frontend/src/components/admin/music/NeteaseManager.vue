@@ -381,7 +381,7 @@ onBeforeUnmount(() => {
       <section class="rounded-2xl border border-white/[0.065] bg-white/[0.025] p-4 min-[640px]:p-5">
         <h3 class="mb-4 flex items-center gap-2 text-sm font-medium text-white/80"><Search :size="16" />搜索歌曲</h3>
         <form class="flex flex-col gap-2 min-[560px]:flex-row" @submit.prevent="search(1)">
-          <input v-model="keywords" class="field" placeholder="歌曲名、歌手或专辑" maxlength="100" />
+          <input v-model="keywords" class="field" placeholder="歌曲名、歌手或专辑" maxlength="200" />
           <button class="primary-button shrink-0" type="submit" :disabled="searching"><Search :size="14" />{{ searching ? '搜索中…' : '搜索' }}</button>
         </form>
 
@@ -421,7 +421,7 @@ onBeforeUnmount(() => {
               <button class="secondary-button shrink-0" type="submit" :disabled="appending || !selectedPlaylistID || !selectedTracks.length"><ListPlus :size="14" />{{ appending ? '追加中…' : `追加到已有列表（${selectedTracks.length}）` }}</button>
             </form>
             <form class="flex flex-col gap-2 min-[560px]:flex-row" @submit.prevent="createPlaylist">
-              <input v-model="createName" class="field" placeholder="新播放列表名称" maxlength="80" />
+              <input v-model="createName" class="field" placeholder="新播放列表名称" maxlength="100" />
               <button class="primary-button shrink-0" type="submit" :disabled="creating || !selectedTracks.length"><ListPlus :size="14" />{{ creating ? '创建中…' : `创建列表（${selectedTracks.length}）` }}</button>
             </form>
           </div>
@@ -432,7 +432,7 @@ onBeforeUnmount(() => {
         <h3 class="mb-4 flex items-center gap-2 text-sm font-medium text-white/80"><Download :size="16" />导入网易云歌单</h3>
         <form class="grid gap-4" @submit.prevent="importPlaylist">
           <FormField label="歌单 ID 或分享链接"><input v-model="importInput" class="field" placeholder="例如 123456789 或网易云歌单分享链接" /></FormField>
-          <FormField label="本站播放列表名称" hint="可选"><input v-model="importName" class="field" placeholder="留空使用网易云歌单名称" maxlength="80" /></FormField>
+          <FormField label="本站播放列表名称" hint="可选"><input v-model="importName" class="field" placeholder="留空使用网易云歌单名称" maxlength="100" /></FormField>
           <div><button class="primary-button" type="submit" :disabled="importing"><LogIn :size="14" />{{ importing ? '导入中…' : '导入歌单' }}</button></div>
         </form>
       </section>
