@@ -88,6 +88,30 @@ describe('useTerminal guestbook submission', () => {
     expect(terminal.lines.value.some((line) => line.text.includes('Commands:'))).toBe(true)
   })
 
+  it.each([
+    'ls',
+    'reboot',
+    'sudo rm -rf /',
+    'adb shell',
+    'ipconfig /all',
+    'Get-ChildItem -Path .',
+    'pnpm install',
+    'docker ps',
+    './custom-script.sh',
+    'custombinary && othercustom',
+  ])('rejects shell command %s without creating a guestbook message', async (command) => {
+    const { terminal } = setupTerminal()
+    const submit = vi.spyOn(publicApi, 'submitGuestbook')
+    terminal.input.value = command
+
+    await terminal.submit()
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(terminal.input.value).toBe('')
+    expect(terminal.lines.value[0].text).toBe(`Detecting…@127.0.0.1:~$ ${command}`)
+    expect(terminal.lines.value[1]).toMatchObject({ text: 'Permission denied', kind: 'error' })
+  })
+
   it('rejects overlong messages before the API request and preserves input', async () => {
     const { settings, terminal } = setupTerminal()
     const submit = vi.spyOn(publicApi, 'submitGuestbook')
@@ -110,6 +134,34 @@ describe('useTerminal guestbook submission', () => {
 
     expect(terminal.lines.value[0].text).toBe('Linux@127.0.0.1:~$ whoami')
     expect(terminal.lines.value[1].text).toBe('Linux · Chrome · 127.0.0.1')
+  })
+
+  it.each(['Android 17', 'Android'])('persists and echoes %s for new guestbook messages', async (os) => {
+    const { entries, terminal } = setupTerminal()
+    terminal.system.value = { ...systemInfo, os, distribution: 'android', distributionKey: 'android' }
+    const saved: GuestbookEntry = {
+      id: 2,
+      system_name: os,
+      distribution: 'android',
+      browser_name: 'Chrome',
+      browser_version: '130.0.0.0',
+      ip_address: '127.0.0.1',
+      message: 'hello world',
+      status: 'published',
+      created_at: new Date().toISOString(),
+    }
+    const submit = vi.spyOn(publicApi, 'submitGuestbook').mockResolvedValue(saved)
+    terminal.input.value = 'hello world'
+
+    await terminal.submit()
+
+    expect(terminal.lines.value[0].text).toBe(`${os}@127.0.0.1:~$ hello world`)
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ system_name: os, distribution: 'android' }))
+    expect(entries.value).toEqual([saved])
+
+    terminal.input.value = 'guestbook'
+    await terminal.submit()
+    expect(terminal.lines.value.some((line) => line.text === `${os}@127.0.0.1:~$ hello world`)).toBe(true)
   })
 
   it('renders manual fastfetch as one complete block with its color logo', async () => {

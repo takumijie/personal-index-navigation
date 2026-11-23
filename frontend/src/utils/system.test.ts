@@ -42,6 +42,17 @@ describe('detectSystem', () => {
     expect(result).toMatchObject({ os, distributionKey })
   })
 
+  it.each([
+    ['Mozilla/5.0 (Linux; Android 17; Pixel 10) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36', 'Android 17'],
+    ['Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36', 'Android'],
+  ])('detects Android versions when available', async (userAgent, os) => {
+    vi.stubGlobal('navigator', { userAgent })
+
+    const result = await detectSystem()
+
+    expect(result).toMatchObject({ os, distributionKey: 'android' })
+  })
+
   it('extracts mobile OS versions and Safari versions', async () => {
     vi.stubGlobal('navigator', {
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 Version/18.1 Mobile/15E148 Safari/604.1',

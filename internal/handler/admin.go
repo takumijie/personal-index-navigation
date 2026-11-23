@@ -233,6 +233,9 @@ func (a *API) UpdateSettings(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
+	if a.indexPage != nil {
+		a.indexPage.Select(updated.Loader)
+	}
 	success(c, updated)
 }
 

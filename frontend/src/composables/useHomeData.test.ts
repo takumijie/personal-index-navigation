@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { publicApi } from '@/api'
 import { DEFAULT_SETTINGS } from '@/data/defaults'
@@ -17,6 +19,19 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs()
+  delete document.documentElement.dataset.loaderTheme
+})
+
+describe('useHomeData loader bootstrap', () => {
+  it('uses the server-selected loader theme before any API request', () => {
+    document.documentElement.dataset.loaderTheme = 'beige'
+    const settings = vi.mocked(publicApi.settings)
+
+    const home = useHomeData()
+
+    expect(home.settings.value.loader.theme).toBe('beige')
+    expect(settings).not.toHaveBeenCalled()
+  })
 })
 
 describe('useHomeData music isolation', () => {

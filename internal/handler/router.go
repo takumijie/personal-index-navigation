@@ -12,10 +12,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"homepage/internal/config"
 	"homepage/internal/middleware"
+	"homepage/internal/model"
 	"homepage/web"
 
 	"github.com/gin-gonic/gin"
@@ -41,6 +43,15 @@ func NewRouterWithAssets(cfg config.Config, api *API, assets fs.FS) (*gin.Engine
 	} else if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("配置可信代理: %w", err)
 	}
+	settings, err := api.content.Settings()
+	if err != nil {
+		return nil, fmt.Errorf("读取首屏加载页设置: %w", err)
+	}
+	indexPage, err := newIndexPageCache(assets, settings.Loader)
+	if err != nil {
+		return nil, fmt.Errorf("预生成首屏页面: %w", err)
+	}
+	api.indexPage = indexPage
 	router.Use(middleware.Logger(), middleware.Recovery(), middleware.Security())
 	if cfg.Server.Mode == gin.DebugMode {
 		router.Use(middleware.DevelopmentCORS())
@@ -154,13 +165,88 @@ func NewRouterWithAssets(cfg config.Config, api *API, assets fs.FS) (*gin.Engine
 				return
 			}
 		}
-		if _, err := fs.Stat(assets, "index.html"); err != nil {
+		if api.indexPage == nil {
 			notFound()
 			return
 		}
-		serveEmbeddedFile(c, assets, "index.html", compressedAssets)
+		api.indexPage.ServeHTTP(c)
 	})
 	return router, nil
+}
+
+type indexPage struct {
+	raw        []byte
+	compressed []byte
+}
+
+type indexPageCache struct {
+	pages   map[string]*indexPage
+	current atomic.Pointer[indexPage]
+}
+
+func newIndexPageCache(assets fs.FS, initial model.LoaderSettings) (*indexPageCache, error) {
+	template, err := fs.ReadFile(assets, "index.html")
+	if err != nil {
+		return nil, err
+	}
+	cache := &indexPageCache{pages: make(map[string]*indexPage, 2)}
+	for _, theme := range []string{"dark", "beige"} {
+		page, err := buildIndexPage(template, theme)
+		if err != nil {
+			return nil, err
+		}
+		cache.pages[theme] = page
+	}
+	cache.Select(initial)
+	return cache, nil
+}
+
+func buildIndexPage(template []byte, theme string) (*indexPage, error) {
+	background := "#0a0a09"
+	if theme == "beige" {
+		background = "#dad4bb"
+	}
+	openingTag := fmt.Sprintf(`<html lang="zh-CN" data-loader-theme="%s" style="background:%s">`, theme, background)
+	raw := bytes.Replace(template, []byte(`<html lang="zh-CN">`), []byte(openingTag), 1)
+	if bytes.Equal(raw, template) {
+		return nil, fmt.Errorf("index.html 缺少首屏主题注入点")
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(raw); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return &indexPage{raw: raw, compressed: compressed.Bytes()}, nil
+}
+
+func (c *indexPageCache) Select(loader model.LoaderSettings) {
+	theme := loader.Theme
+	if theme != "beige" {
+		theme = "dark"
+	}
+	c.current.Store(c.pages[theme])
+}
+
+func (c *indexPageCache) ServeHTTP(ctx *gin.Context) {
+	page := c.current.Load()
+	ctx.Header("Cache-Control", "no-cache")
+	ctx.Header("Content-Type", assetContentType("index.html", nil))
+	ctx.Writer.Header().Add("Vary", "Accept-Encoding")
+	if ctx.GetHeader("Range") == "" && acceptsGzip(ctx.GetHeader("Accept-Encoding")) {
+		ctx.Header("Content-Encoding", "gzip")
+		ctx.Header("Content-Length", strconv.Itoa(len(page.compressed)))
+		if ctx.Request.Method == http.MethodHead {
+			ctx.Status(http.StatusOK)
+			return
+		}
+		ctx.Data(http.StatusOK, assetContentType("index.html", nil), page.compressed)
+		return
+	}
+	http.ServeContent(ctx.Writer, ctx.Request, "index.html", time.Time{}, bytes.NewReader(page.raw))
 }
 
 func precompressAssets(assets fs.FS) (map[string][]byte, error) {
