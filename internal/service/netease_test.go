@@ -221,3 +221,24 @@ func providerTestRepository(t *testing.T) *repository.Repository {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return repository.New(db)
 }
+
+func TestNormalizeNeteaseMediaURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "upgrade cdn host", in: "http://m801.music.126.net/a.mp3?x=1", want: "https://m801.music.126.net/a.mp3?x=1"},
+		{name: "upgrade bare domain", in: "http://126.net/a.mp3", want: "https://126.net/a.mp3"},
+		{name: "keep https", in: "https://m8.music.126.net/a.mp3", want: "https://m8.music.126.net/a.mp3"},
+		{name: "keep unrelated host", in: "http://example.com/a.mp3", want: "http://example.com/a.mp3"},
+		{name: "keep invalid", in: "not a url", want: "not a url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeNeteaseMediaURL(tt.in); got != tt.want {
+				t.Fatalf("normalizeNeteaseMediaURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

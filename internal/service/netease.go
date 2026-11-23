@@ -468,7 +468,7 @@ func (s *NeteaseService) Playback(ctx context.Context, track model.MusicTrack) (
 	if response.Code != http.StatusOK || len(response.Data) == 0 || response.Data[0].URL == "" {
 		return Playback{}, failure(http.StatusUnprocessableEntity, "playback_unavailable", "该歌曲暂无可播放地址，可能受版权或会员权限限制")
 	}
-	playback := Playback{URL: response.Data[0].URL}
+	playback := Playback{URL: normalizeNeteaseMediaURL(response.Data[0].URL)}
 	if response.Data[0].Expi > 0 {
 		expiresAt := time.Now().Add(time.Duration(response.Data[0].Expi) * time.Second)
 		playback.ExpiresAt = &expiresAt
@@ -536,6 +536,19 @@ type neteaseSong struct {
 	LegacyAlbum   neteaseAlbum    `json:"album"`
 }
 
+func normalizeNeteaseMediaURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" {
+		return raw
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "126.net" && !strings.HasSuffix(host, ".126.net") {
+		return raw
+	}
+	parsed.Scheme = "https"
+	return parsed.String()
+}
+
 func neteaseTrack(song neteaseSong, sort int) model.MusicTrack {
 	artists := song.Artists
 	if len(artists) == 0 {
@@ -555,7 +568,7 @@ func neteaseTrack(song neteaseSong, sort int) model.MusicTrack {
 		album.PicURL = song.LegacyAlbum.PicURL
 	}
 	return model.MusicTrack{
-		Title: song.Name, Artist: strings.Join(names, " / "), Album: album.Name, Cover: album.PicURL,
+		Title: song.Name, Artist: strings.Join(names, " / "), Album: album.Name, Cover: normalizeNeteaseMediaURL(album.PicURL),
 		Source: neteaseProvider, ExternalID: strconv.FormatInt(song.ID, 10), Sort: sort, Enabled: true,
 	}
 }
