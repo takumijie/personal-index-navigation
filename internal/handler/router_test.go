@@ -653,6 +653,87 @@ func TestEmbeddedAssetsCachingCompressionAndSPAFallback(t *testing.T) {
 	}
 }
 
+func TestLoaderBootstrapCachedAndRefreshed(t *testing.T) {
+	app := newTestApp(t)
+	get := func(acceptEncoding string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		if acceptEncoding != "" {
+			request.Header.Set("Accept-Encoding", acceptEncoding)
+		}
+		response := httptest.NewRecorder()
+		app.router.ServeHTTP(response, request)
+		return response
+	}
+	assertBootstrap := func(body, theme, background string) {
+		t.Helper()
+		for _, expected := range []string{
+			`data-loader-theme="` + theme + `"`,
+			`style="background:` + background + `"`,
+		} {
+			if !strings.Contains(body, expected) {
+				t.Fatalf("首屏缺少 %q: %s", expected, body)
+			}
+		}
+		if strings.Contains(body, "data-loader-sound-enabled") {
+			t.Fatal("首屏不应再注入加载页音效设置")
+		}
+	}
+
+	response := get("")
+	if response.Code != http.StatusOK || response.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("首屏原始响应错误: status=%d headers=%v", response.Code, response.Header())
+	}
+	assertBootstrap(response.Body.String(), "dark", "#0a0a09")
+
+	response = get("gzip")
+	if response.Code != http.StatusOK || response.Header().Get("Content-Encoding") != "gzip" ||
+		response.Header().Get("Content-Length") != fmt.Sprint(response.Body.Len()) {
+		t.Fatalf("首屏 gzip 响应错误: status=%d headers=%v", response.Code, response.Header())
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertBootstrap(string(decompressed), "dark", "#0a0a09")
+
+	cookie := login(t, app.router)
+	settings := responseData[model.Settings](t, performJSON(t, app.router, http.MethodGet, "/api/v1/settings", nil, nil, http.StatusOK))
+	settings.Loader.Theme = "beige"
+	performJSON(t, app.router, http.MethodPut, "/api/v1/admin/settings", settings, cookie, http.StatusOK)
+	response = get("")
+	assertBootstrap(response.Body.String(), "beige", "#dad4bb")
+
+	headRequest := httptest.NewRequest(http.MethodHead, "/", nil)
+	headRequest.Header.Set("Accept-Encoding", "gzip")
+	headResponse := httptest.NewRecorder()
+	app.router.ServeHTTP(headResponse, headRequest)
+	if headResponse.Code != http.StatusOK || headResponse.Body.Len() != 0 ||
+		headResponse.Header().Get("Content-Encoding") != "gzip" || headResponse.Header().Get("Content-Length") == "" {
+		t.Fatalf("首屏 HEAD gzip 响应错误: status=%d body=%d headers=%v", headResponse.Code, headResponse.Body.Len(), headResponse.Header())
+	}
+
+	sqlDB, err := app.db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	response = get("")
+	if response.Code != http.StatusOK {
+		t.Fatalf("数据库关闭后首屏仍应从内存响应: status=%d", response.Code)
+	}
+	assertBootstrap(response.Body.String(), "beige", "#dad4bb")
+}
+
 func performRawBody(t *testing.T, handler http.Handler, path string, body []byte, contentType string, cookie *http.Cookie, unknownLength bool, status int) {
 	t.Helper()
 	var reader io.Reader = bytes.NewReader(body)

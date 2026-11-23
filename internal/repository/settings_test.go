@@ -193,7 +193,7 @@ func TestDecodeSettingsExplicitCardsOverrideDefaults(t *testing.T) {
 	if cards.Profile || !cards.Navigation || cards.Devices || !cards.Terminal || cards.Clock {
 		t.Fatalf("显式 cards 配置应覆盖默认值，实际为 %+v", cards)
 	}
-	if settings.Loader.Theme != "beige" || !settings.Loader.SoundEnabled ||
+	if settings.Loader.Theme != "beige" ||
 		settings.Loader.WatermarkTitle != "MY SPACE" || settings.Loader.BadgeImage != "/storage/images/badge.png" {
 		t.Fatalf("loader 字段解析不正确: %+v", settings.Loader)
 	}
@@ -224,8 +224,8 @@ func TestDecodeSettingsPartialLoaderKeepsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeSettings 返回错误: %v", err)
 	}
-	if settings.Loader.Theme != "dark" || settings.Loader.SoundEnabled {
-		t.Fatalf("部分 loader 数据应保持主题和音效默认值，实际为 %+v", settings.Loader)
+	if settings.Loader.Theme != "dark" {
+		t.Fatalf("部分 loader 数据应保持主题默认值，实际为 %+v", settings.Loader)
 	}
 	if settings.Loader.WatermarkTitle != "MY SPACE" {
 		t.Fatalf("已有 loader 字段不应被默认值覆盖，实际为 %+v", settings.Loader)

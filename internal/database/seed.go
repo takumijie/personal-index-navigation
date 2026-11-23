@@ -39,7 +39,7 @@ func Seed(db *gorm.DB, cfg config.Config) error {
 		},
 		Cards:                model.CardSettings{Profile: true, Navigation: true, Devices: true, Terminal: true, Clock: true},
 		HomeButton:           model.HomeButtonSettings{Theme: "classic"},
-		Loader:               model.LoaderSettings{Theme: "dark", SoundEnabled: false},
+		Loader:               model.LoaderSettings{Theme: "dark"},
 		Terminal:             model.TerminalSettings{FastfetchLoadingMS: 2000},
 		GuestbookAutoPublish: false,
 		GuestbookMaxLength:   500,

@@ -181,12 +181,8 @@ function loadLatest() {
             <FormField label="水印小字" :error="fieldErrors.watermark_caption" hint="留空使用默认文案"><input v-model="form.loader.watermark_caption" class="field" maxlength="120" :placeholder="DEFAULT_WATERMARK_CAPTION" /></FormField>
             <ImageUploadField v-model="form.loader.badge_image" label="徽章图片（可选，点阵化显示）" />
           </div>
-          <div class="mt-5 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4">
-            <ToggleSwitch v-model="form.loader.sound_enabled" label="加载页音效" />
-          </div>
           <p v-if="fieldErrors.badge_image" class="mt-2 text-xs text-rose-300">{{ fieldErrors.badge_image }}</p>
           <p class="mt-3 text-[11px] text-white/35">徽章图片支持链接或上传，加载页会将其转换为半调点阵风格；留空使用内置几何徽章。</p>
-          <p class="mt-2 text-[11px] text-white/35">音效开关控制初始状态，访客仍可在加载页调整；默认开启时将在首次点击或按键后启用声音。</p>
         </section>
 
         <section>

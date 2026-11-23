@@ -4,11 +4,18 @@ import { errorMessage } from '@/api/client'
 import { DEFAULT_SETTINGS } from '@/data/defaults'
 import type { Device, GuestbookEntry, NavigationItem, Profile, PublicTrack, Settings, Visitor } from '@/types'
 
+function initialSettings(): Settings {
+  const initial = structuredClone(DEFAULT_SETTINGS)
+  const root = document.documentElement
+  if (root.dataset.loaderTheme === 'beige') initial.loader.theme = 'beige'
+  return initial
+}
+
 export function useHomeData() {
   const profile = ref<Profile | null>(null)
   const navigation = ref<NavigationItem[]>([])
   const devices = ref<Device[]>([])
-  const settings = ref<Settings>(structuredClone(DEFAULT_SETTINGS))
+  const settings = ref<Settings>(initialSettings())
   const guestbook = ref<GuestbookEntry[]>([])
   const tracks = ref<PublicTrack[]>([])
   const visitor = ref<Visitor | null>(null)

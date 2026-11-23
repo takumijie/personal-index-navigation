@@ -48,7 +48,6 @@ export interface CardSettings {
 
 export interface LoaderSettings {
   theme: 'dark' | 'beige'
-  sound_enabled: boolean
   watermark_title: string
   watermark_subtitle: string
   watermark_caption: string

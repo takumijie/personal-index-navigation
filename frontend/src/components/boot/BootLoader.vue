@@ -16,102 +16,6 @@ const watermarkTitle = computed(() => props.loader.watermark_title || DEFAULT_WA
 const watermarkSubtitle = computed(() => props.loader.watermark_subtitle || DEFAULT_WATERMARK_SUBTITLE)
 const watermarkCaption = computed(() => props.loader.watermark_caption || DEFAULT_WATERMARK_CAPTION)
 
-/* ---------------- 音效（Web Audio 合成，默认关闭） ---------------- */
-class SpaceAudioSynth {
-  private ctx: AudioContext | null = null
-  enabled = false
-
-  private init() {
-    if (!this.ctx) {
-      const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-      if (AudioCtor) this.ctx = new AudioCtor()
-    }
-    if (this.ctx?.state === 'suspended') void this.ctx.resume()
-  }
-
-  unlock() {
-    this.init()
-  }
-
-  toggle() {
-    this.enabled = !this.enabled
-    if (this.enabled) {
-      this.init()
-      this.playChime()
-    }
-    return this.enabled
-  }
-
-  playTick(pitch = 1) {
-    if (!this.enabled || !this.ctx) return
-    try {
-      const now = this.ctx.currentTime
-      const osc = this.ctx.createOscillator()
-      const gain = this.ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(1320 * pitch, now)
-      osc.frequency.exponentialRampToValueAtTime(680, now + 0.028)
-      gain.gain.setValueAtTime(0.03, now)
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.032)
-      osc.connect(gain)
-      gain.connect(this.ctx.destination)
-      osc.start(now)
-      osc.stop(now + 0.035)
-    } catch { /* 忽略音频异常 */ }
-  }
-
-  playChime() {
-    if (!this.enabled || !this.ctx) return
-    try {
-      const now = this.ctx.currentTime
-      const notes = [587.33, 880, 1174.66, 1318.51]
-      notes.forEach((freq, index) => {
-        const osc = this.ctx!.createOscillator()
-        const gain = this.ctx!.createGain()
-        osc.type = 'sine'
-        osc.frequency.setValueAtTime(freq, now + index * 0.045)
-        gain.gain.setValueAtTime(0.038, now + index * 0.045)
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + index * 0.045 + 0.36)
-        osc.connect(gain)
-        gain.connect(this.ctx!.destination)
-        osc.start(now + index * 0.045)
-        osc.stop(now + index * 0.045 + 0.38)
-      })
-    } catch { /* 忽略音频异常 */ }
-  }
-
-  dispose() {
-    void this.ctx?.close().catch(() => {})
-    this.ctx = null
-  }
-}
-const synth = new SpaceAudioSynth()
-const soundEnabled = ref(false)
-let soundTouched = false
-
-watch(() => props.loader.sound_enabled, (enabled) => {
-  if (soundTouched) return
-  soundEnabled.value = enabled
-  synth.enabled = enabled
-}, { immediate: true })
-
-function removeAudioUnlockListeners() {
-  window.removeEventListener('pointerdown', unlockAudio)
-  window.removeEventListener('keydown', unlockAudio)
-}
-
-function unlockAudio() {
-  if (!soundEnabled.value) return
-  synth.unlock()
-  removeAudioUnlockListeners()
-}
-
-function toggleSound() {
-  soundTouched = true
-  removeAudioUnlockListeners()
-  soundEnabled.value = synth.toggle()
-}
-
 /* ---------------- 徽章：内置 SVG / 点阵化 / 原图降级 ---------------- */
 const badgeMode = ref<'builtin' | 'halftone' | 'original'>('builtin')
 const halftoneHost = ref<HTMLElement | null>(null)
@@ -261,13 +165,11 @@ async function runSequence() {
     row.appendChild(textSpan)
     container.appendChild(row)
     scrambleRevealText(textSpan, step.text, step.highlight ? 240 : 170)
-    synth.playTick(step.final ? 1.25 : 0.94 + (i % 5) * 0.04)
     progress.value = Math.round(((i + 1) / sequence.length) * 100)
   }
 
   subtitle.value = '个人空间同步完成'
   phaseLabel.value = 'CONNECTION ESTABLISHED // 100%'
-  synth.playChime()
   if (props.ready) {
     leaveTimer = setTimeout(leave, 450)
   } else {
@@ -287,8 +189,6 @@ onMounted(() => {
     emit('finish')
     return
   }
-  window.addEventListener('pointerdown', unlockAudio)
-  window.addEventListener('keydown', unlockAudio)
   clockTimer = setInterval(() => {
     const now = new Date()
     const pad = (n: number, len = 2) => String(n).padStart(len, '0')
@@ -303,8 +203,6 @@ onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer)
   scrambleFrames.forEach((id) => cancelAnimationFrame(id))
   scrambleFrames.clear()
-  removeAudioUnlockListeners()
-  synth.dispose()
 })
 </script>
 
@@ -342,9 +240,6 @@ onBeforeUnmount(() => {
     <!-- 右上角控制栏 -->
     <header class="fixed right-4 top-4 z-50 flex items-center gap-2.5 sm:right-8 sm:top-7 sm:gap-3.5">
       <div class="font-mono-tech mr-1 hidden text-xs tracking-widest opacity-65 lg:block">{{ topClock }}</div>
-      <button type="button" title="开启/关闭空间终端电子提示音" class="yorha-btn font-mono-tech flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-[11px] tracking-wider sm:px-3 sm:text-xs" @click="toggleSound">
-        <span class="diamond-marker" /><span>{{ soundEnabled ? 'AUDIO: ON' : 'AUDIO: OFF' }}</span>
-      </button>
       <button type="button" title="跳过自检动画直接进入个人空间" class="yorha-btn font-mono-tech flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-[11px] tracking-wider sm:px-3 sm:text-xs" @click="leave">
         <span>SKIP &gt;&gt;</span>
       </button>
@@ -511,13 +406,4 @@ onBeforeUnmount(() => {
 .yorha-btn:hover::before, .yorha-btn:focus-visible::before { left: 0; }
 .yorha-btn:hover, .yorha-btn:focus-visible { color: var(--boot-bg); border-color: var(--boot-text); }
 .yorha-btn > span { position: relative; z-index: 1; }
-.diamond-marker {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  background-color: currentColor;
-  transform: rotate(45deg);
-  transition: transform 0.25s ease;
-}
-.yorha-btn:hover .diamond-marker { transform: rotate(225deg) scale(1.15); }
 </style>

@@ -17,6 +17,7 @@ type API struct {
 	music        *service.MusicService
 	netease      *service.NeteaseService
 	s3           *service.S3Service
+	indexPage    *indexPageCache
 	cookieSecure bool
 }
 
