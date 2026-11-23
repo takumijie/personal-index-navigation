@@ -110,7 +110,7 @@ func (s *UploadService) DeleteMusic(rawURL string) error {
 
 func allowedExtension(kind, ext string) bool {
 	if kind == "images" {
-		return oneOf(ext, ".jpg", ".jpeg", ".png", ".gif", ".webp")
+		return oneOf(ext, ".jpg", ".jpeg", ".png", ".gif", ".webp", ".ico")
 	}
 	if kind == "lyrics" {
 		return ext == ".lrc"
@@ -120,7 +120,7 @@ func allowedExtension(kind, ext string) bool {
 
 func validFileContent(kind, ext string, data []byte, mime string) bool {
 	if kind == "images" {
-		validMIME := oneOf(mime, "image/jpeg", "image/png", "image/gif", "image/webp")
+		validMIME := oneOf(mime, "image/jpeg", "image/png", "image/gif", "image/webp", "image/x-icon", "image/vnd.microsoft.icon")
 		if !validMIME {
 			return false
 		}
@@ -133,6 +133,9 @@ func validFileContent(kind, ext string, data []byte, mime string) bool {
 			return mime == "image/gif" && len(data) >= 6 && (string(data[:6]) == "GIF87a" || string(data[:6]) == "GIF89a")
 		case ".webp":
 			return mime == "image/webp" && len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP"
+		case ".ico":
+			return oneOf(mime, "image/x-icon", "image/vnd.microsoft.icon") && len(data) >= 6 &&
+				bytes.Equal(data[:4], []byte{0x00, 0x00, 0x01, 0x00}) && (data[4] > 0 || data[5] > 0)
 		}
 	}
 	if !oneOf(mime, "audio/mpeg", "audio/flac", "audio/x-flac", "audio/wav", "audio/wave", "audio/x-wav", "audio/ogg", "application/ogg", "application/octet-stream") {

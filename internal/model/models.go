@@ -179,17 +179,24 @@ type MusicSettings struct {
 	PlaylistID    uint `json:"playlist_id"`
 }
 
+type HomeButtonSettings struct {
+	Theme    string `json:"theme"`
+	ImageURL string `json:"image_url"`
+}
+
 type Settings struct {
-	Version              uint64           `json:"version"`
-	SiteTitle            string           `json:"site_title"`
-	Timezone             string           `json:"timezone"`
-	TimeFormat           string           `json:"time_format"`
-	ClockLabel           string           `json:"clock_label"`
-	Background           Background       `json:"background"`
-	Cards                CardSettings     `json:"cards"`
-	Loader               LoaderSettings   `json:"loader"`
-	Terminal             TerminalSettings `json:"terminal"`
-	Music                MusicSettings    `json:"music"`
-	GuestbookAutoPublish bool             `json:"guestbook_auto_publish"`
-	GuestbookMaxLength   int              `json:"guestbook_max_length"`
+	Version              uint64             `json:"version"`
+	SiteTitle            string             `json:"site_title"`
+	FaviconURL           string             `json:"favicon_url"`
+	Timezone             string             `json:"timezone"`
+	TimeFormat           string             `json:"time_format"`
+	ClockLabel           string             `json:"clock_label"`
+	HomeButton           HomeButtonSettings `json:"home_button"`
+	Background           Background         `json:"background"`
+	Cards                CardSettings       `json:"cards"`
+	Loader               LoaderSettings     `json:"loader"`
+	Terminal             TerminalSettings   `json:"terminal"`
+	Music                MusicSettings      `json:"music"`
+	GuestbookAutoPublish bool               `json:"guestbook_auto_publish"`
+	GuestbookMaxLength   int                `json:"guestbook_max_length"`
 }

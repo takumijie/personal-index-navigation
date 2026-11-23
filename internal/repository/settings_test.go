@@ -174,6 +174,9 @@ func TestDecodeSettingsLegacyDataKeepsCardsEnabled(t *testing.T) {
 	if !settings.Music.LyricsEnabled || settings.Music.PlaylistID != 0 {
 		t.Fatalf("旧数据缺少 music 字段时应默认开启歌词并自动选列表，实际为 %+v", settings.Music)
 	}
+	if settings.FaviconURL != "" || settings.HomeButton != (model.HomeButtonSettings{Theme: "classic"}) {
+		t.Fatalf("旧数据缺少图标和主页按钮字段时应使用默认外观，实际为 %+v", settings)
+	}
 }
 
 func TestDecodeSettingsExplicitCardsOverrideDefaults(t *testing.T) {

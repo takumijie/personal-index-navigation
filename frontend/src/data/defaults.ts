@@ -11,9 +11,11 @@ export const DEFAULT_WATERMARK_CAPTION = 'Connected to Personal Cyberspace'
 export const DEFAULT_SETTINGS: Settings = {
   version: 0,
   site_title: 'Personal Space',
+  favicon_url: '',
   timezone: 'Asia/Shanghai',
   time_format: '24',
   clock_label: 'LOCAL TIME',
+  home_button: { theme: 'classic', image_url: '' },
   background: {
     day_url: DEFAULT_DAY_BACKGROUND,
     night_url: DEFAULT_NIGHT_BACKGROUND,

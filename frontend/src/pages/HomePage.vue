@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
 import { ArrowUpRight, CloudOff, MoonStar, RefreshCw, SunMedium } from 'lucide-vue-next'
 import BackgroundScene from '@/components/common/BackgroundScene.vue'
+import HomeBrandLink from '@/components/common/HomeBrandLink.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import BootLoader from '@/components/boot/BootLoader.vue'
 import ProfileCard from '@/components/profile/ProfileCard.vue'
@@ -11,11 +12,15 @@ import TerminalCard from '@/components/terminal/TerminalCard.vue'
 import ClockPanel from '@/components/clock/ClockPanel.vue'
 import { useBackground } from '@/composables/useBackground'
 import { useHomeData } from '@/composables/useHomeData'
+import { updateFavicon } from '@/utils/favicon'
 
 const { profile, navigation, devices, settings, guestbook, tracks, visitor, loading, error, terminalError, loadTerminalData, reload } = useHomeData()
 const { mode, activeUrl, loaded, failed: backgroundFailed, duration, reducedMotion } = useBackground(settings)
 
-watchEffect(() => { document.title = settings.value.site_title })
+watchEffect(() => {
+  document.title = settings.value.site_title
+  updateFavicon(settings.value.favicon_url)
+})
 
 const cards = computed(() => settings.value.cards)
 const leftVisible = computed(() => cards.value.profile || cards.value.navigation || cards.value.devices)
@@ -49,15 +54,7 @@ onBeforeUnmount(() => {
     />
 
     <header class="mx-auto flex h-[68px] w-full max-w-[1500px] items-center justify-between px-4 min-[640px]:px-6">
-      <a href="/" class="group flex items-center gap-2.5" aria-label="返回主页">
-        <span class="flex size-8 items-center justify-center rounded-xl border border-white/10 bg-white/[0.07] shadow-lg backdrop-blur-xl">
-          <span class="size-2.5 rotate-45 rounded-[3px] border border-violet-200/70 bg-violet-300/20 transition group-hover:rotate-[135deg]" />
-        </span>
-        <div>
-          <p class="max-w-[220px] truncate text-[12px] font-medium tracking-wide text-white/75">{{ settings.site_title }}</p>
-          <p class="text-[8px] tracking-[0.22em] text-white/30">A QUIET DIGITAL CORNER</p>
-        </div>
-      </a>
+      <HomeBrandLink :title="settings.site_title" :home-button="settings.home_button" />
       <div class="flex items-center gap-2">
         <div class="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-black/10 px-3 py-1.5 text-[9px] tracking-wider text-white/45 backdrop-blur-lg">
           <SunMedium v-if="mode === 'day'" :size="12" class="text-amber-200/70" />

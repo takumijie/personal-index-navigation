@@ -179,6 +179,15 @@ func validateSettings(settings model.Settings) error {
 	if !oneOf(settings.TimeFormat, "12", "24") {
 		return invalid("时间格式无效")
 	}
+	if !resourceURL(settings.FaviconURL, false) || !validLength(settings.FaviconURL, 2048) {
+		return invalid("网站图标 URL 无效")
+	}
+	if !oneOf(settings.HomeButton.Theme, "classic", "glass", "terminal", "aurora", "image") {
+		return invalid("主页按钮主题无效")
+	}
+	if !resourceURL(settings.HomeButton.ImageURL, settings.HomeButton.Theme == "image") || !validLength(settings.HomeButton.ImageURL, 2048) {
+		return invalid("主页按钮图片 URL 无效")
+	}
 	if !resourceURL(settings.Background.DayURL, true) || !resourceURL(settings.Background.NightURL, true) {
 		return invalid("背景 URL 无效")
 	}
