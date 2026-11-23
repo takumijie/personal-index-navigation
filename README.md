@@ -4,6 +4,28 @@
 
 项目包含个人资料、站点导航、设备展示、终端留言、日夜背景、时钟、多来源音乐播放和后台管理，适合部署为轻量个人数字空间。
 
+## 界面预览
+
+以下截图来自示例站点 [www.ilibilib.top](https://www.ilibilib.top)。
+
+### 加载页
+
+终端自检风格的启动页，完成后淡出进入主页。
+
+![加载页：终端自检动画与连接进度](assets/screenshots/loading.webp)
+
+### 主页终端 Fastfetch
+
+访客进入后，终端会输出 Fastfetch 风格的系统与访客信息，随后进入留言交互。
+
+![主页终端：Fastfetch 系统信息](assets/screenshots/fastfetch.webp)
+
+### 加载完毕的主页
+
+个人资料、快速导航、留言终端、时钟与音乐播放器全部就绪。
+
+![加载完毕的主页：个人资料、快速导航、终端留言与音乐播放器](assets/screenshots/home.webp)
+
 ## 功能特性
 
 - **个人资料**：配置头像、昵称、用户名、简介、标签和展示图片。
@@ -384,6 +406,7 @@ Copy-Item -Path "frontend\dist\*" -Destination "web\dist" -Recurse -Force
 ├── web/dist/            # 嵌入 Go 程序的前端构建产物
 ├── data/                # 本地 SQLite 数据
 ├── storage/             # 上传文件与封面缓存
+├── assets/screenshots/  # README 展示截图
 ├── config.yaml          # 本地启动配置
 └── Dockerfile           # 多阶段生产镜像构建
 ```
