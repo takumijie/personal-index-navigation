@@ -53,6 +53,7 @@ let playbackExpiresAt = ''
 let pendingPlaybackSerial = -1
 let playRequested = false
 let autoRetryUsed = false
+let pendingSeek: { serial: number; time: number } | null = null
 
 function sortedTracks(tracks: Track[]) {
   return tracks.filter((track) => track.enabled).sort((a, b) => a.sort - b.sort)
@@ -108,6 +109,7 @@ async function requestPlaybackAndPlay(track: Track, serial: number) {
     return
   }
 
+  if (currentTime.value > 0) pendingSeek = { serial, time: currentTime.value }
   clearPlayback()
   pendingPlaybackSerial = serial
   try {
@@ -119,7 +121,7 @@ async function requestPlaybackAndPlay(track: Track, serial: number) {
     await nextTick()
     if (!audio.value || !isCurrentRequest(serial)) return
     audio.value.load()
-    await playLoadedAudio(serial)
+    if (pendingSeek?.serial !== serial) await playLoadedAudio(serial)
   } catch {
     if (!isCurrentRequest(serial)) return
     clearPlayback()
@@ -149,6 +151,7 @@ function changeTrack(index: number, continuePlaying = playRequested || playing.v
   const serial = ++trackSerial
   playRequested = continuePlaying && tracks.length > 0
   autoRetryUsed = false
+  pendingSeek = null
   clearPlayback()
   currentIndex.value = tracks.length ? (index + tracks.length) % tracks.length : 0
   currentTime.value = 0
@@ -201,6 +204,7 @@ function handleEnded() {
   if (!audio.value || !currentTrack.value) return
   error.value = ''
   playRequested = true
+  pendingSeek = null
   audio.value.currentTime = 0
   currentTime.value = 0
   void requestPlaybackAndPlay(currentTrack.value, trackSerial)
@@ -209,9 +213,10 @@ function handleEnded() {
 function seek(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
   if (audio.value && Number.isFinite(duration.value)) {
-    audio.value.currentTime = value / 100 * duration.value
+    const time = value / 100 * duration.value
+    pendingSeek = { serial: trackSerial, time }
+    audio.value.currentTime = time
     currentTime.value = audio.value.currentTime
-    if (playRequested && currentTrack.value) void requestPlaybackAndPlay(currentTrack.value, trackSerial)
   }
 }
 
@@ -232,6 +237,16 @@ function handleTimeUpdate() {
 
 function handleDurationChange() {
   if (!disposed) duration.value = audio.value?.duration || 0
+}
+
+function handleLoadedMetadata() {
+  handleDurationChange()
+  const target = pendingSeek
+  if (disposed || !audio.value || !target || target.serial !== trackSerial || playbackSerial !== trackSerial) return
+  pendingSeek = null
+  audio.value.currentTime = target.time
+  currentTime.value = audio.value.currentTime
+  void playLoadedAudio(trackSerial)
 }
 
 function handleAudioError() {
@@ -290,7 +305,7 @@ onBeforeUnmount(() => {
       @play="!disposed && (playing = true)"
       @pause="!disposed && (playing = false)"
       @timeupdate="handleTimeUpdate"
-      @loadedmetadata="handleDurationChange"
+      @loadedmetadata="handleLoadedMetadata"
       @durationchange="handleDurationChange"
       @ended="handleEnded"
       @error="handleAudioError"

@@ -30,7 +30,7 @@ func Open(path string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("设置数据库权限: %w", err)
 	}
 	gormLogger := logger.New(log.New(os.Stderr, "", log.LstdFlags), logger.Config{
-		LogLevel: logger.Warn, IgnoreRecordNotFoundError: true,
+		LogLevel: logger.Warn, IgnoreRecordNotFoundError: true, ParameterizedQueries: true,
 	})
 	db, err := gorm.Open(
 		sqlite.Open(path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"),

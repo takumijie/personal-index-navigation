@@ -65,6 +65,7 @@ func openTestRouter(t *testing.T, cfg config.Config, db *gorm.DB) testApp {
 		uploads,
 		service.NewMusicService(repo, cfg.Storage.Path),
 	)
+	api.SetMusicProviders(service.NewNeteaseService(repo, nil), service.NewS3Service(repo, nil))
 	router, err := NewRouter(cfg, api)
 	if err != nil {
 		t.Fatal(err)
@@ -362,6 +363,46 @@ func TestRouteBodyLimits(t *testing.T) {
 	}
 }
 
+func TestNeteaseBulkPlaylistBodyLimit(t *testing.T) {
+	app := newTestApp(t)
+	cookie := login(t, app.router)
+	makeTracks := func(firstID int) []model.MusicTrack {
+		tracks := make([]model.MusicTrack, 1000)
+		for i := range tracks {
+			tracks[i] = model.MusicTrack{
+				Title: fmt.Sprintf("Track %d", firstID+i), Artist: "Artist", Source: "netease",
+				ExternalID: fmt.Sprint(firstID + i), URL: "https://example.com/song.mp3",
+				Cover: "https://example.com/" + strings.Repeat("c", 2000), Enabled: true,
+			}
+		}
+		return tracks
+	}
+	payload := gin.H{"name": "Bulk import", "tracks": makeTracks(1)}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) <= 2<<20 || len(encoded) >= 8<<20 {
+		t.Fatalf("测试请求体大小 %d 不在 2 至 8 MiB 之间", len(encoded))
+	}
+	created := responseData[struct {
+		Playlist model.Playlist `json:"playlist"`
+		Imported int            `json:"imported"`
+	}](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/netease/create-playlist", payload, cookie, http.StatusOK))
+	if created.Imported != 1000 || len(created.Playlist.Tracks) != 1000 {
+		t.Fatalf("批量创建数量错误: imported=%d tracks=%d", created.Imported, len(created.Playlist.Tracks))
+	}
+	appended := responseData[struct {
+		Imported int `json:"imported"`
+	}](t, performJSON(t, app.router, http.MethodPost, "/api/v1/admin/music/netease/append-playlist", gin.H{
+		"playlist_id": created.Playlist.ID, "tracks": makeTracks(1001),
+	}, cookie, http.StatusOK))
+	if appended.Imported != 1000 {
+		t.Fatalf("批量追加数量错误: %d", appended.Imported)
+	}
+	performRawBody(t, app.router, "/api/v1/admin/music/netease/create-playlist", make([]byte, (8<<20)+1), "application/json", cookie, false, http.StatusRequestEntityTooLarge)
+}
+
 func TestEmbeddedAssetsCachingCompressionAndSPAFallback(t *testing.T) {
 	app := newTestApp(t)
 	entries, err := fs.ReadDir(web.Assets, "dist/assets")
@@ -406,6 +447,16 @@ func TestEmbeddedAssetsCachingCompressionAndSPAFallback(t *testing.T) {
 		response.Header().Get("Content-Length") != fmt.Sprint(response.Body.Len()) {
 		t.Fatalf("gzip 资源响应头错误: status=%d headers=%v", response.Code, response.Header())
 	}
+	gzipContentLength := response.Header().Get("Content-Length")
+	headRequest := httptest.NewRequest(http.MethodHead, assetPath, nil)
+	headRequest.Header.Set("Accept-Encoding", "gzip")
+	headResponse := httptest.NewRecorder()
+	app.router.ServeHTTP(headResponse, headRequest)
+	if headResponse.Code != http.StatusOK || headResponse.Body.Len() != 0 ||
+		headResponse.Header().Get("Content-Encoding") != "gzip" || headResponse.Header().Get("Content-Length") != gzipContentLength ||
+		headResponse.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("HEAD gzip 资源响应错误: status=%d body=%d headers=%v", headResponse.Code, headResponse.Body.Len(), headResponse.Header())
+	}
 	reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
 	if err != nil {
 		t.Fatal(err)
@@ -438,6 +489,18 @@ func TestEmbeddedAssetsCachingCompressionAndSPAFallback(t *testing.T) {
 		if response.Code != http.StatusNotFound {
 			t.Fatalf("缺失资源 %s 应返回 404，实际 %d: %s", route, response.Code, response.Body.String())
 		}
+		headRequest = httptest.NewRequest(http.MethodHead, route, nil)
+		headResponse = httptest.NewRecorder()
+		app.router.ServeHTTP(headResponse, headRequest)
+		if headResponse.Code != http.StatusNotFound || headResponse.Body.Len() != 0 {
+			t.Fatalf("HEAD 缺失资源 %s 响应错误: status=%d body=%d", route, headResponse.Code, headResponse.Body.Len())
+		}
+	}
+	headRequest = httptest.NewRequest(http.MethodHead, "/admin", nil)
+	headResponse = httptest.NewRecorder()
+	app.router.ServeHTTP(headResponse, headRequest)
+	if headResponse.Code != http.StatusOK || headResponse.Body.Len() != 0 || headResponse.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("HEAD SPA 路由响应错误: status=%d body=%d headers=%v", headResponse.Code, headResponse.Body.Len(), headResponse.Header())
 	}
 
 	response = performJSON(t, app.router, http.MethodPost, "/api/v1/admin/login", gin.H{

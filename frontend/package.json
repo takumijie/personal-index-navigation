@@ -18,6 +18,8 @@
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.10.2",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.6.0",
+    "happy-dom": "^21.0.4",
     "tailwindcss": "^4.0.0",
     "typescript": "~5.7.2",
     "vite": "^6.0.5",

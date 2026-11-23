@@ -1,6 +1,7 @@
 package database
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -39,6 +40,47 @@ func TestOpenEnablesWALAndSecuresDatabaseFiles(t *testing.T) {
 		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 			t.Errorf("%s 权限为 %o，预期 600", name, info.Mode().Perm())
 		}
+	}
+}
+
+func TestOpenRedactsSQLParametersFromLogs(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = writer
+	db, openErr := Open(filepath.Join(t.TempDir(), "logging.db"))
+	os.Stderr = originalStderr
+	if openErr != nil {
+		_ = writer.Close()
+		_ = reader.Close()
+		t.Fatal(openErr)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	const secret = "test-secret-that-must-not-appear"
+	if err := db.Exec("SELECT * FROM missing_table WHERE secret = ?", secret).Error; err == nil {
+		t.Fatal("测试 SQL 应返回错误")
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	logged, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(logged) == 0 {
+		t.Fatal("没有捕获到 SQL 错误日志")
+	}
+	if strings.Contains(string(logged), secret) {
+		t.Fatalf("GORM 日志泄露 SQL 参数: %s", logged)
 	}
 }
 

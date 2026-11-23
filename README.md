@@ -89,6 +89,8 @@ docker run -d \
   personal-index-navigation:latest
 ```
 
+上述 `cookie_secure=true` 示例面向由 Nginx 等反向代理提供 HTTPS 的生产环境，不能用于通过非 localhost 的普通 HTTP 地址登录。仅本机 HTTP 调试时，将该变量改为 `HOMEPAGE_SERVER_COOKIE_SECURE=false`，并通过 `http://localhost:8080/admin` 登录；健康检查仍可访问 `http://localhost:8080/healthz`，无需 Cookie。
+
 自定义配置的 `server.port` 需要与端口映射对应。例如配置为 `8081`，则使用 `-p 8080:8081`。
 
 > 容器以 UID/GID `65532` 的非 root 用户运行。推荐使用上述命名卷；如果改用宿主机目录绑定挂载，需要确保该用户对目录具有读写权限。
@@ -120,6 +122,8 @@ mkdir -p data storage
 
 ### 3. 启动服务
 
+以下示例面向由 Nginx 等反向代理提供 HTTPS 的生产环境：
+
 ```bash
 HOMEPAGE_CONFIG=config.prod.yaml \
 HOMEPAGE_SERVER_MODE=release \
@@ -128,7 +132,7 @@ HOMEPAGE_ADMIN_PASSWORD='replace-with-a-strong-password' \
 ./homepage
 ```
 
-按实际配置端口访问主页和 `/admin`。使用仓库示例端口时，健康检查命令为：
+按实际配置端口访问主页和 `/admin`。`cookie_secure=true` 不适用于非 localhost 的普通 HTTP 登录；仅本机 HTTP 调试时，将其改为 `HOMEPAGE_SERVER_COOKIE_SECURE=false` 并通过 localhost 访问。健康检查使用 HTTP 且不依赖 Cookie，使用仓库示例端口时：
 
 ```bash
 curl --fail http://localhost:8081/healthz
@@ -306,10 +310,16 @@ go run ./cmd/server
 
 ## 测试与构建检查
 
+`web/dist` 已被 `.gitignore` 和 `.dockerignore` 忽略，fresh clone 必须先构建并同步前端产物，供 `go:embed` 使用。按以下顺序执行：
+
 ```powershell
-go test ./...
+npm ci --prefix frontend
 npm run test --prefix frontend
 npm run build --prefix frontend
+New-Item -ItemType Directory -Force -Path "web\dist" | Out-Null
+Copy-Item -Path "frontend\dist\*" -Destination "web\dist" -Recurse -Force
+go test ./...
+go vet ./...
 ```
 
 ## 数据持久化与备份

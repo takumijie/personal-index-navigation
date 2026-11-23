@@ -60,8 +60,12 @@ func RequestDeadline(timeout time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		deadline := time.Now().Add(timeout)
 		controller := http.NewResponseController(c.Writer)
-		_ = controller.SetReadDeadline(deadline)
-		_ = controller.SetWriteDeadline(deadline)
+		if err := controller.SetReadDeadline(deadline); err != nil {
+			slog.Warn("设置连接读取截止时间失败", "error", err)
+		}
+		if err := controller.SetWriteDeadline(deadline); err != nil {
+			slog.Warn("设置连接写入截止时间失败", "error", err)
+		}
 		c.Next()
 	}
 }

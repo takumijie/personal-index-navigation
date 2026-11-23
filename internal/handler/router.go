@@ -97,9 +97,10 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	musicAdmin.POST("/netease/status", api.NeteaseStatus)
 	musicAdmin.POST("/netease/logout", api.NeteaseLogout)
 	musicAdmin.POST("/netease/search", api.NeteaseSearch)
-	musicAdmin.POST("/netease/create-playlist", api.NeteaseCreatePlaylist)
-	musicAdmin.POST("/netease/append-playlist", api.NeteaseAppendPlaylist)
 	musicAdmin.POST("/netease/import-playlist", middleware.RequestDeadline(5*time.Minute), api.NeteaseImportPlaylist)
+	musicBulkAdmin := admin.Group("/music", middleware.BodyLimit(8<<20))
+	musicBulkAdmin.POST("/netease/create-playlist", api.NeteaseCreatePlaylist)
+	musicBulkAdmin.POST("/netease/append-playlist", api.NeteaseAppendPlaylist)
 	musicAdmin.POST("/s3/config/read", api.S3ReadConfig)
 	musicAdmin.POST("/s3/config/save", api.S3SaveConfig)
 	musicAdmin.POST("/s3/test", api.S3Test)
@@ -107,7 +108,7 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	musicAdmin.POST("/s3/objects/delete", api.S3DeleteObject)
 	musicAdmin.POST("/s3/import", api.S3Import)
 	musicAdmin.POST("/s3/append-playlist", api.S3AppendPlaylist)
-	admin.POST("/uploads/image", middleware.BodyLimit(cfg.Upload.MaxImageBytes+(1<<20)), api.UploadImage)
+	admin.POST("/uploads/image", middleware.RequestDeadline(5*time.Minute), middleware.BodyLimit(cfg.Upload.MaxImageBytes+(1<<20)), api.UploadImage)
 	admin.POST("/uploads/music", middleware.RequestDeadline(5*time.Minute), middleware.BodyLimit(cfg.Upload.MaxMusicBytes+(1<<20)), api.UploadMusic)
 	admin.POST("/uploads/lyrics", middleware.BodyLimit((1<<20)+(64<<10)), api.UploadLyrics)
 
@@ -115,41 +116,78 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	if err != nil {
 		return nil, err
 	}
+	compressedAssets, err := precompressAssets(assets)
+	if err != nil {
+		return nil, fmt.Errorf("预压缩前端资源: %w", err)
+	}
 	router.NoMethod(func(c *gin.Context) {
 		fail(c, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 	})
 	router.NoRoute(func(c *gin.Context) {
-		if c.Request.Method != http.MethodGet || strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/storage/") {
+		notFound := func() {
+			if c.Request.Method == http.MethodHead {
+				c.Data(http.StatusNotFound, "text/plain; charset=utf-8", nil)
+				return
+			}
 			fail(c, http.StatusNotFound, "not_found", "接口或资源不存在")
+		}
+		if (c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead) || strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/storage/") {
+			notFound()
 			return
 		}
 		name := strings.TrimPrefix(path.Clean("/"+c.Request.URL.Path), "/")
 		if name != "" && name != "." {
 			if info, err := fs.Stat(assets, name); err == nil && !info.IsDir() {
-				serveEmbeddedFile(c, assets, name)
+				serveEmbeddedFile(c, assets, name, compressedAssets)
 				return
 			}
 			if path.Ext(name) != "" {
-				fail(c, http.StatusNotFound, "not_found", "接口或资源不存在")
+				notFound()
 				return
 			}
 		}
 		if _, err := fs.Stat(assets, "index.html"); err != nil {
-			fail(c, http.StatusNotFound, "not_found", "前端资源尚未构建")
+			notFound()
 			return
 		}
-		serveEmbeddedFile(c, assets, "index.html")
+		serveEmbeddedFile(c, assets, "index.html", compressedAssets)
 	})
 	return router, nil
 }
 
-func serveEmbeddedFile(c *gin.Context, assets fs.FS, name string) {
+func precompressAssets(assets fs.FS) (map[string][]byte, error) {
+	compressedAssets := make(map[string][]byte)
+	err := fs.WalkDir(assets, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !compressibleAsset(name) {
+			return err
+		}
+		content, err := fs.ReadFile(assets, name)
+		if err != nil {
+			return err
+		}
+		var compressed bytes.Buffer
+		writer := gzip.NewWriter(&compressed)
+		if _, err := writer.Write(content); err != nil {
+			_ = writer.Close()
+			return err
+		}
+		if err := writer.Close(); err != nil {
+			return err
+		}
+		compressedAssets[name] = compressed.Bytes()
+		return nil
+	})
+	return compressedAssets, err
+}
+
+func serveEmbeddedFile(c *gin.Context, assets fs.FS, name string, compressedAssets map[string][]byte) {
 	if strings.HasPrefix(name, "assets/") {
 		c.Header("Cache-Control", "public, max-age=31536000, immutable")
 	} else if name == "index.html" {
 		c.Header("Cache-Control", "no-cache")
 	}
-	if !compressibleAsset(name) {
+	compressed, compressible := compressedAssets[name]
+	if !compressible {
 		http.ServeFileFS(c.Writer, c.Request, assets, name)
 		return
 	}
@@ -158,25 +196,14 @@ func serveEmbeddedFile(c *gin.Context, assets fs.FS, name string) {
 		http.ServeFileFS(c.Writer, c.Request, assets, name)
 		return
 	}
-	content, err := fs.ReadFile(assets, name)
-	if err != nil {
-		fail(c, http.StatusNotFound, "not_found", "资源不存在")
-		return
-	}
-	var compressed bytes.Buffer
-	writer := gzip.NewWriter(&compressed)
-	if _, err := writer.Write(content); err != nil {
-		_ = writer.Close()
-		handleError(c, err)
-		return
-	}
-	if err := writer.Close(); err != nil {
-		handleError(c, err)
-		return
-	}
 	c.Header("Content-Encoding", "gzip")
-	c.Header("Content-Length", strconv.Itoa(compressed.Len()))
-	c.Data(http.StatusOK, assetContentType(name, content), compressed.Bytes())
+	c.Header("Content-Length", strconv.Itoa(len(compressed)))
+	c.Header("Content-Type", assetContentType(name, nil))
+	if c.Request.Method == http.MethodHead {
+		c.Status(http.StatusOK)
+		return
+	}
+	c.Data(http.StatusOK, assetContentType(name, nil), compressed)
 }
 
 func compressibleAsset(name string) bool {
