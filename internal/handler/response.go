@@ -11,10 +11,20 @@ import (
 )
 
 func success(c *gin.Context, data any) {
+	if c.Request.Method == http.MethodHead {
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.Status(http.StatusOK)
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": data})
 }
 
 func fail(c *gin.Context, status int, code, message string) {
+	if c.Request.Method == http.MethodHead {
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.AbortWithStatus(status)
+		return
+	}
 	c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": code, "message": message}})
 }
 

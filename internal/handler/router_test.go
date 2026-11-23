@@ -12,9 +12,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"homepage/internal/config"
 	"homepage/internal/database"
@@ -31,6 +33,22 @@ type testApp struct {
 	cfg    config.Config
 	db     *gorm.DB
 	router *gin.Engine
+}
+
+type routeDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	readDeadline  time.Time
+	writeDeadline time.Time
+}
+
+func (r *routeDeadlineRecorder) SetReadDeadline(deadline time.Time) error {
+	r.readDeadline = deadline
+	return nil
+}
+
+func (r *routeDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
+	r.writeDeadline = deadline
+	return nil
 }
 
 func newTestApp(t *testing.T) testApp {
@@ -401,6 +419,77 @@ func TestNeteaseBulkPlaylistBodyLimit(t *testing.T) {
 		t.Fatalf("批量追加数量错误: %d", appended.Imported)
 	}
 	performRawBody(t, app.router, "/api/v1/admin/music/netease/create-playlist", make([]byte, (8<<20)+1), "application/json", cookie, false, http.StatusRequestEntityTooLarge)
+}
+
+func TestNeteaseBulkPlaylistRoutesUseExtendedDeadline(t *testing.T) {
+	app := newTestApp(t)
+	cookie := login(t, app.router)
+	for _, route := range []string{
+		"/api/v1/admin/music/netease/create-playlist",
+		"/api/v1/admin/music/netease/append-playlist",
+	} {
+		request := httptest.NewRequest(http.MethodPost, route, strings.NewReader(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(cookie)
+		recorder := &routeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+		started := time.Now()
+		app.router.ServeHTTP(recorder, request)
+		for name, deadline := range map[string]time.Time{"read": recorder.readDeadline, "write": recorder.writeDeadline} {
+			remaining := deadline.Sub(started)
+			if remaining < 5*time.Minute-time.Second || remaining > 5*time.Minute+time.Second {
+				t.Errorf("%s 的 %s deadline 未设置为 5 分钟: %v", route, name, remaining)
+			}
+		}
+	}
+}
+
+func TestHealthAndStorageHead(t *testing.T) {
+	app := newTestApp(t)
+	for _, route := range []string{"/healthz", "/api/v1/health"} {
+		get := performJSON(t, app.router, http.MethodGet, route, nil, nil, http.StatusOK)
+		head := performJSON(t, app.router, http.MethodHead, route, nil, nil, http.StatusOK)
+		if head.Body.Len() != 0 || head.Header().Get("Content-Type") != get.Header().Get("Content-Type") {
+			t.Errorf("HEAD %s 响应错误: body=%d headers=%v", route, head.Body.Len(), head.Header())
+		}
+	}
+
+	for _, kind := range []string{"images", "music"} {
+		directory := filepath.Join(app.cfg.Storage.Path, kind)
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		filename := "sample.dat"
+		content := []byte("static-file-content")
+		if err := os.WriteFile(filepath.Join(directory, filename), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		route := "/storage/" + kind + "/" + filename
+		get := performJSON(t, app.router, http.MethodGet, route, nil, nil, http.StatusOK)
+		head := performJSON(t, app.router, http.MethodHead, route, nil, nil, http.StatusOK)
+		if head.Body.Len() != 0 || head.Header().Get("Content-Type") != get.Header().Get("Content-Type") ||
+			head.Header().Get("Content-Length") != get.Header().Get("Content-Length") {
+			t.Errorf("HEAD %s 与 GET 表示不一致: GET=%v HEAD=%v body=%d", route, get.Header(), head.Header(), head.Body.Len())
+		}
+
+		missing := "/storage/" + kind + "/missing.dat"
+		performJSON(t, app.router, http.MethodGet, missing, nil, nil, http.StatusNotFound)
+		if response := performJSON(t, app.router, http.MethodHead, missing, nil, nil, http.StatusNotFound); response.Body.Len() != 0 {
+			t.Errorf("HEAD %s 不应返回响应体: %d", missing, response.Body.Len())
+		}
+		invalid := "/storage/" + kind + "/bad%5Cname"
+		performJSON(t, app.router, http.MethodGet, invalid, nil, nil, http.StatusBadRequest)
+		if response := performJSON(t, app.router, http.MethodHead, invalid, nil, nil, http.StatusBadRequest); response.Body.Len() != 0 {
+			t.Errorf("HEAD %s 不应返回响应体: %d", invalid, response.Body.Len())
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/storage/music/sample.dat", nil)
+	request.Header.Set("Range", "bytes=0-5")
+	response := httptest.NewRecorder()
+	app.router.ServeHTTP(response, request)
+	if response.Code != http.StatusPartialContent || response.Body.String() != "static" {
+		t.Errorf("存储文件 Range 回归: status=%d body=%q", response.Code, response.Body.String())
+	}
 }
 
 func TestEmbeddedAssetsCachingCompressionAndSPAFallback(t *testing.T) {
