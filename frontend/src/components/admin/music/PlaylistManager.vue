@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, toRaw } from 'vue'
 import { ListMusic, Pencil, Plus, Save, Trash2, X } from 'lucide-vue-next'
 import { adminApi, publicApi } from '@/api'
-import { errorMessage } from '@/api/client'
+import { ApiError, errorMessage } from '@/api/client'
 import type { Playlist, Settings, Track } from '@/types'
 import AlertMessage from '@/components/common/AlertMessage.vue'
 import FormField from '@/components/common/FormField.vue'
@@ -14,6 +14,7 @@ type PlaylistForm = Pick<Playlist, 'name' | 'sort' | 'enabled'>
 const blank = (): PlaylistForm => ({ name: '', sort: 0, enabled: true })
 const playlists = ref<Playlist[]>([])
 const settings = ref<Settings | null>(null)
+const conflict = ref<Settings | null>(null)
 const selectedPlaylistId = ref<number | null>(null)
 const form = ref<PlaylistForm>(blank())
 const editingId = ref<number | null>(null)
@@ -57,15 +58,37 @@ async function savePlaybackSettings() {
   error.value = ''
   success.value = ''
   try {
-    const music = { ...settings.value.music }
-    const latest = await publicApi.settings()
-    settings.value = await adminApi.updateSettings({ ...latest, music })
+    settings.value = await adminApi.updateSettings(settings.value)
+    conflict.value = null
     success.value = '前台播放设置已保存'
   } catch (reason) {
-    error.value = errorMessage(reason)
+    if (reason instanceof ApiError && reason.status === 409) {
+      try {
+        conflict.value = await publicApi.settings()
+        error.value = '设置已被其他页面修改。你的播放设置编辑仍保留，请核对服务器最新设置后再重试。'
+      } catch (refreshReason) {
+        error.value = `${errorMessage(reason)}；获取最新设置失败：${errorMessage(refreshReason)}`
+      }
+    } else {
+      error.value = errorMessage(reason)
+    }
   } finally {
     savingPlayback.value = false
   }
+}
+
+async function retryPlaybackWithLatest() {
+  if (!settings.value || !conflict.value) return
+  settings.value = { ...structuredClone(toRaw(conflict.value)), music: { ...settings.value.music } }
+  await savePlaybackSettings()
+}
+
+function loadLatestPlayback() {
+  if (!conflict.value) return
+  settings.value = structuredClone(toRaw(conflict.value))
+  conflict.value = null
+  error.value = ''
+  success.value = '已载入服务器最新设置，原播放设置编辑已放弃'
 }
 
 function selectPlaylist(id: number) {
@@ -166,6 +189,17 @@ async function removeTrackFromPlaylist(track: Track) {
     </div>
     <AlertMessage :message="error" type="error" />
     <AlertMessage :message="success" type="success" />
+    <section v-if="conflict" class="mb-5 rounded-xl border border-amber-300/15 bg-amber-400/[0.05] p-4 text-xs text-amber-100/80" data-testid="settings-conflict">
+      <p>服务器最新版本为 {{ conflict.version }}，当前播放设置编辑尚未覆盖它。</p>
+      <details class="mt-3">
+        <summary class="cursor-pointer text-amber-100">查看服务器最新设置</summary>
+        <pre class="mt-3 max-h-64 overflow-auto rounded-lg bg-black/20 p-3 text-[10px] leading-4 text-white/55">{{ JSON.stringify(conflict, null, 2) }}</pre>
+      </details>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button class="secondary-button" type="button" :disabled="savingPlayback" @click="loadLatestPlayback">载入最新设置</button>
+        <button class="primary-button" type="button" :disabled="savingPlayback" @click="retryPlaybackWithLatest">保留当前编辑并重试</button>
+      </div>
+    </section>
 
     <section v-if="settings" class="mb-6 rounded-2xl border border-white/[0.065] bg-white/[0.025] p-4">
       <div class="mb-4">

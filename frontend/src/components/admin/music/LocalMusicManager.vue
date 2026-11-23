@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Link2Off, Music2, Pencil, Plus, Save, Trash2, Upload, X } from 'lucide-vue-next'
 import { adminApi } from '@/api'
 import { errorMessage } from '@/api/client'
@@ -31,6 +31,7 @@ const lyricsInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
 const success = ref('')
 const fieldErrors = ref<Record<string, string>>({})
+const insecureRemoteCount = computed(() => items.value.filter((item) => item.source === 'remote' && (item.url.startsWith('http://') || item.cover.startsWith('http://'))).length)
 
 function sortTracks() {
   items.value.sort((a, b) => a.sort - b.sort || a.id - b.id)
@@ -196,6 +197,11 @@ async function remove(item: Track) {
     </div>
     <AlertMessage :message="error" type="error" />
     <AlertMessage :message="success" type="success" />
+    <AlertMessage
+      v-if="insecureRemoteCount"
+      :message="`${insecureRemoteCount} 个历史 Remote 曲目使用 HTTP 音频或封面。release 模式默认阻止这些地址，请改用已验证支持 HTTPS 的来源；受控 HTTP 部署需显式开启媒体兼容开关。`"
+      type="warning"
+    />
 
     <div v-if="formOpen" class="mb-6 rounded-2xl border border-violet-200/10 bg-violet-200/[0.025] p-4 min-[640px]:p-5">
       <div class="mb-5 flex items-center justify-between gap-3">
@@ -216,7 +222,7 @@ async function remove(item: Track) {
             <span v-if="form.url" class="min-w-0 flex-1 truncate text-[11px] text-emerald-200/60" :title="form.url">{{ form.url }}</span>
           </div>
         </FormField>
-        <FormField v-else label="Remote 音频 URL" :error="fieldErrors.url" hint="仅历史曲目可编辑"><input v-model="form.url" class="field" type="url" placeholder="https://example.com/music.mp3" /></FormField>
+        <FormField v-else label="Remote 音频 URL" :error="fieldErrors.url" hint="仅历史曲目可编辑"><input v-model="form.url" class="field" type="url" maxlength="2048" placeholder="https://example.com/music.mp3" /></FormField>
 
         <FormField label="LRC 歌词" :hint="form.lyric_path ? '可替换或解除关联' : 'UTF-8 文本'">
           <input ref="lyricsInput" class="hidden" type="file" accept=".lrc,text/plain" @change="uploadLyrics" />

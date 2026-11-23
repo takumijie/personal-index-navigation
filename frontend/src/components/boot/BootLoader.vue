@@ -396,7 +396,7 @@ onBeforeUnmount(() => {
   --boot-watermark-opacity: 0.08;
   background-color: var(--boot-bg);
   color: var(--boot-text);
-  font-family: 'Noto Sans SC', 'Share Tech Mono', monospace;
+  font-family: var(--font-sans);
   transition: opacity 0.65s ease, transform 0.65s ease;
 }
 .boot-root.theme-beige {
@@ -421,7 +421,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 .font-mono-tech {
-  font-family: 'Share Tech Mono', 'Noto Sans SC', monospace;
+  font-family: var(--font-mono);
 }
 .yorha-grid-bg {
   background-image:

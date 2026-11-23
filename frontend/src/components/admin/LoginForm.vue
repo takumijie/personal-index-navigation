@@ -46,12 +46,12 @@ async function login() {
       <AlertMessage :message="error" type="error" />
       <form class="space-y-4" @submit.prevent="login">
         <FormField label="用户名">
-          <div class="relative"><UserRound :size="15" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/25" /><input v-model="username" class="field pl-9" autocomplete="username" placeholder="管理员用户名" :disabled="loading" /></div>
+          <div class="relative"><UserRound :size="15" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/25" /><input v-model="username" class="field pl-9" maxlength="100" autocomplete="username" placeholder="管理员用户名" :disabled="loading" /></div>
         </FormField>
         <FormField label="密码">
           <div class="relative">
             <LockKeyhole :size="15" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/25" />
-            <input v-model="password" class="field px-9" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" placeholder="管理员密码" :disabled="loading" />
+            <input v-model="password" class="field px-9" maxlength="200" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" placeholder="管理员密码" :disabled="loading" />
             <button class="absolute right-1 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center text-white/30 hover:text-white/70" type="button" :aria-label="showPassword ? '隐藏密码' : '显示密码'" @click="showPassword = !showPassword"><EyeOff v-if="showPassword" :size="15" /><Eye v-else :size="15" /></button>
           </div>
         </FormField>

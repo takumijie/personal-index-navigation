@@ -114,7 +114,8 @@ func TestMusicSourceMigrationPreservesTracks(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
+		CREATE TABLE site_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec("INSERT INTO schema_migrations(version) VALUES (1)").Error; err != nil {
@@ -157,7 +158,8 @@ func TestPlaylistNameMigrationDeduplicatesAndConstrainsNames(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
+		CREATE TABLE site_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec("INSERT INTO schema_migrations(version) VALUES (1), (2)").Error; err != nil {

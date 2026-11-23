@@ -122,6 +122,7 @@ type MusicProviderConfig struct {
 type SiteSettings struct {
 	ID        uint      `gorm:"primaryKey" json:"-"`
 	Data      string    `json:"-"`
+	Version   uint64    `gorm:"not null;default:1" json:"-"`
 	CreatedAt time.Time `json:"-"`
 	UpdatedAt time.Time `json:"-"`
 }
@@ -179,6 +180,7 @@ type MusicSettings struct {
 }
 
 type Settings struct {
+	Version              uint64           `json:"version"`
 	SiteTitle            string           `json:"site_title"`
 	Timezone             string           `json:"timezone"`
 	TimeFormat           string           `json:"time_format"`

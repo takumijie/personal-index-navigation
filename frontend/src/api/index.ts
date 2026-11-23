@@ -1,12 +1,16 @@
-import { request } from './client'
+import { request, SLOW_REQUEST_TIMEOUT_MS, type RequestOptions } from './client'
 import type {
   Device, GuestbookEntry, ImportResult, Lyrics, NavigationItem, NeteaseConfig, NeteaseQrSession, NeteaseQrState,
-  NeteaseSearchResult, NeteaseStatus, Playback, Playlist, Profile, S3Config, S3ObjectsResult, Settings, Track, Visitor,
+  NeteaseSearchResult, NeteaseStatus, Playback, Playlist, Profile, PublicPlaylist, PublicTrack, S3Config, S3ObjectsResult, Settings, Track, Visitor,
 } from '@/types'
 
 const json = (method: string, body?: unknown): RequestInit => ({
   method,
   body: body === undefined ? undefined : JSON.stringify(body),
+})
+const slowJson = (method: string, body?: unknown): RequestOptions => ({
+  ...json(method, body),
+  timeoutMs: SLOW_REQUEST_TIMEOUT_MS,
 })
 
 export const publicApi = {
@@ -15,9 +19,9 @@ export const publicApi = {
   devices: () => request<Device[]>('/devices'),
   settings: () => request<Settings>('/settings'),
   guestbook: () => request<GuestbookEntry[]>('/guestbook'),
-  playlist: () => request<Track[]>('/music/playlist'),
-  playlists: () => request<Playlist[]>('/music/playlists'),
-  playlistByID: (id: number) => request<Playlist>(`/music/playlists/${id}`),
+  playlist: () => request<PublicTrack[]>('/music/playlist'),
+  playlists: () => request<PublicPlaylist[]>('/music/playlists'),
+  playlistByID: (id: number) => request<PublicPlaylist>(`/music/playlists/${id}`),
   playback: (id: number) => request<Playback>(`/music/tracks/${id}/playback`),
   lyrics: (id: number) => request<Lyrics>(`/music/tracks/${id}/lyrics`),
   coverUrl: (id: number) => `/api/v1/music/tracks/${id}/cover`,
@@ -59,9 +63,9 @@ export const adminApi = {
   neteaseStatus: () => request<NeteaseStatus>('/admin/music/netease/status', json('POST')),
   neteaseLogout: () => request<null>('/admin/music/netease/logout', json('POST')),
   neteaseSearch: (keywords: string, page: number, pageSize = 20) => request<NeteaseSearchResult>('/admin/music/netease/search', json('POST', { keywords, page, page_size: pageSize })),
-  neteaseCreatePlaylist: (name: string, tracks: Track[]) => request<ImportResult>('/admin/music/netease/create-playlist', json('POST', { name, tracks })),
-  neteaseAppendPlaylist: (playlistID: number, tracks: Track[]) => request<ImportResult>('/admin/music/netease/append-playlist', json('POST', { playlist_id: playlistID, tracks })),
-  neteaseImportPlaylist: (input: string, name: string) => request<ImportResult>('/admin/music/netease/import-playlist', json('POST', { input, name })),
+  neteaseCreatePlaylist: (name: string, tracks: Track[]) => request<ImportResult>('/admin/music/netease/create-playlist', slowJson('POST', { name, tracks })),
+  neteaseAppendPlaylist: (playlistID: number, tracks: Track[]) => request<ImportResult>('/admin/music/netease/append-playlist', slowJson('POST', { playlist_id: playlistID, tracks })),
+  neteaseImportPlaylist: (input: string, name: string) => request<ImportResult>('/admin/music/netease/import-playlist', slowJson('POST', { input, name })),
   s3Config: () => request<S3Config>('/admin/music/s3/config/read', json('POST')),
   saveS3Config: (data: S3Config) => request<S3Config>('/admin/music/s3/config/save', json('POST', data)),
   testS3: () => request<{ connected: boolean }>('/admin/music/s3/test', json('POST')),
@@ -77,5 +81,5 @@ export const adminApi = {
 async function upload(path: string, file: File): Promise<{ url: string }> {
   const body = new FormData()
   body.append('file', file)
-  return request<{ url: string }>(path, { method: 'POST', body })
+  return request<{ url: string }>(path, { method: 'POST', body, timeoutMs: SLOW_REQUEST_TIMEOUT_MS })
 }

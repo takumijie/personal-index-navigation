@@ -100,13 +100,54 @@ func (a *API) CreateGuestbook(c *gin.Context) {
 	success(c, entry)
 }
 
+type publicTrack struct {
+	ID      uint   `json:"id"`
+	Title   string `json:"title"`
+	Artist  string `json:"artist"`
+	Album   string `json:"album"`
+	Cover   string `json:"cover"`
+	Source  string `json:"source"`
+	Sort    int    `json:"sort"`
+	Enabled bool   `json:"enabled"`
+}
+
+type publicPlaylist struct {
+	ID      uint          `json:"id"`
+	Name    string        `json:"name"`
+	Sort    int           `json:"sort"`
+	Enabled bool          `json:"enabled"`
+	Tracks  []publicTrack `json:"tracks"`
+}
+
+func newPublicTrack(track model.MusicTrack) publicTrack {
+	return publicTrack{
+		ID: track.ID, Title: track.Title, Artist: track.Artist, Album: track.Album,
+		Cover: track.Cover, Source: track.Source, Sort: track.Sort, Enabled: track.Enabled,
+	}
+}
+
+func newPublicTracks(tracks []model.MusicTrack) []publicTrack {
+	items := make([]publicTrack, 0, len(tracks))
+	for _, track := range tracks {
+		items = append(items, newPublicTrack(track))
+	}
+	return items
+}
+
+func newPublicPlaylist(playlist model.Playlist) publicPlaylist {
+	return publicPlaylist{
+		ID: playlist.ID, Name: playlist.Name, Sort: playlist.Sort, Enabled: playlist.Enabled,
+		Tracks: newPublicTracks(playlist.Tracks),
+	}
+}
+
 func (a *API) Tracks(c *gin.Context) {
 	playlists, err := a.content.Playlists(true)
 	if err != nil {
 		handleError(c, err)
 		return
 	}
-	items := make([]model.MusicTrack, 0)
+	items := make([]publicTrack, 0)
 	seen := make(map[uint]struct{})
 	for _, playlist := range playlists {
 		for _, track := range playlist.Tracks {
@@ -114,7 +155,7 @@ func (a *API) Tracks(c *gin.Context) {
 				continue
 			}
 			seen[track.ID] = struct{}{}
-			items = append(items, track)
+			items = append(items, newPublicTrack(track))
 		}
 	}
 	success(c, items)
@@ -126,7 +167,7 @@ func (a *API) Playlist(c *gin.Context) {
 		handleError(c, err)
 		return
 	}
-	success(c, playlist.Tracks)
+	success(c, newPublicTracks(playlist.Tracks))
 }
 
 func (a *API) Visitor(c *gin.Context) {

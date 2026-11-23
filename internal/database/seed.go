@@ -82,24 +82,47 @@ func Seed(db *gorm.DB, cfg config.Config) error {
 		if err := tx.Create(&playlist).Error; err != nil {
 			return err
 		}
-		return tx.Create(&model.SiteSettings{Data: string(data)}).Error
+		return tx.Create(&model.SiteSettings{Data: string(data), Version: 1}).Error
 	})
 }
 
 func seedAdmin(db *gorm.DB, cfg config.Admin) error {
+	var user model.AdminUser
+	err := db.Order("id").First(&user).Error
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if err := config.ValidateAdminPassword(cfg.Password); err != nil {
+		return fmt.Errorf("初始管理员密码无效: %w", err)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(cfg.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("生成管理员密码哈希: %w", err)
+	}
+	return db.Create(&model.AdminUser{Username: cfg.Username, PasswordHash: string(hash)}).Error
+}
+
+func ResetAdminPassword(db *gorm.DB, cfg config.Admin) error {
+	if err := config.ValidateAdminPassword(cfg.Password); err != nil {
+		return fmt.Errorf("新管理员密码无效: %w", err)
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(cfg.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("生成管理员密码哈希: %w", err)
 	}
 	var user model.AdminUser
-	err = db.Order("id").First(&user).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return db.Create(&model.AdminUser{Username: cfg.Username, PasswordHash: string(hash)}).Error
+	if err := db.Order("id").First(&user).Error; err != nil {
+		return fmt.Errorf("查找管理员: %w", err)
 	}
-	if err != nil {
-		return err
-	}
-	return db.Model(&user).Updates(map[string]any{
-		"username": cfg.Username, "password_hash": string(hash), "updated_at": time.Now(),
-	}).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&user).Updates(map[string]any{
+			"password_hash": string(hash), "updated_at": time.Now(),
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.AdminSession{}).Error
+	})
 }

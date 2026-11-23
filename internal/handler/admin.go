@@ -228,11 +228,12 @@ func (a *API) UpdateSettings(c *gin.Context) {
 	if !bindJSON(c, &settings) {
 		return
 	}
-	if err := a.content.UpdateSettings(settings); err != nil {
+	updated, err := a.content.UpdateSettings(settings)
+	if err != nil {
 		handleError(c, err)
 		return
 	}
-	success(c, settings)
+	success(c, updated)
 }
 
 func (a *API) AdminTracks(c *gin.Context) {

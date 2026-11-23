@@ -51,7 +51,7 @@ function validate() {
   if (!form.value.title.trim()) errors.title = '请输入导航名称'
   if (!validNavigationUrl(form.value.url)) errors.url = '请输入有效的 http(s) 或 mailto 地址'
   if (!validWebUrl(form.value.icon_url, true)) errors.icon_url = '图标地址格式不正确'
-  if (form.value.sort < 0) errors.sort = '排序值不能小于 0'
+  if (!Number.isFinite(form.value.sort) || form.value.sort < 0 || form.value.sort > 1000000) errors.sort = '排序值应为 0 至 1000000'
   fieldErrors.value = errors
   return !Object.keys(errors).length
 }
@@ -95,10 +95,10 @@ async function remove(item: NavigationItem) {
     <div v-if="formOpen" class="mb-6 rounded-2xl border border-violet-200/10 bg-violet-200/[0.025] p-4 min-[640px]:p-5">
       <div class="mb-5 flex items-center justify-between"><h3 class="text-sm font-medium text-white/80">{{ editingId === null ? '新增导航' : '编辑导航' }}</h3><button class="icon-button size-7" type="button" aria-label="关闭表单" @click="formOpen = false"><X :size="14" /></button></div>
       <form class="grid gap-4 min-[760px]:grid-cols-2" @submit.prevent="save">
-        <FormField label="导航名称" :error="fieldErrors.title"><input v-model="form.title" class="field" maxlength="50" placeholder="我的博客" /></FormField>
-        <FormField label="链接地址" :error="fieldErrors.url"><input v-model="form.url" class="field" placeholder="https://example.com" /></FormField>
-        <FormField label="Lucide 图标名" hint="如 Github"><input v-model="form.icon" class="field" placeholder="Link2" /></FormField>
-        <FormField label="排序" :error="fieldErrors.sort"><input v-model.number="form.sort" class="field" type="number" min="0" /></FormField>
+        <FormField label="导航名称" :error="fieldErrors.title"><input v-model="form.title" class="field" maxlength="100" placeholder="我的博客" /></FormField>
+        <FormField label="链接地址" :error="fieldErrors.url"><input v-model="form.url" class="field" maxlength="2048" placeholder="https://example.com" /></FormField>
+        <FormField label="Lucide 图标名" hint="如 Github"><input v-model="form.icon" class="field" maxlength="100" placeholder="Link2" /></FormField>
+        <FormField label="排序" :error="fieldErrors.sort"><input v-model.number="form.sort" class="field" type="number" min="0" max="1000000" /></FormField>
         <div class="min-[760px]:col-span-2"><ImageUploadField v-model="form.icon_url" label="自定义图标（可选）" /><p v-if="fieldErrors.icon_url" class="mt-1 text-xs text-rose-300">{{ fieldErrors.icon_url }}</p></div>
         <FormField label="打开方式"><select v-model="form.open_mode" class="field"><option value="blank">新标签页打开</option><option value="self">当前页面打开</option></select></FormField>
         <div class="flex items-end pb-1"><ToggleSwitch v-model="form.enabled" label="在主页显示" class="w-full" /></div>

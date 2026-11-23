@@ -47,7 +47,7 @@ async function save() {
   if (!form.value.name.trim()) errors.name = '请输入设备名称'
   if (!form.value.description.trim()) errors.description = '请输入设备描述'
   if (!form.value.category.trim()) errors.category = '请输入设备分类'
-  if (form.value.sort < 0) errors.sort = '排序值不能小于 0'
+  if (!Number.isFinite(form.value.sort) || form.value.sort < 0 || form.value.sort > 1000000) errors.sort = '排序值应为 0 至 1000000'
   fieldErrors.value = errors
   if (Object.keys(errors).length) return
   saving.value = true
@@ -84,11 +84,11 @@ async function remove(item: Device) {
     <div v-if="formOpen" class="mb-6 rounded-2xl border border-violet-200/10 bg-violet-200/[0.025] p-4 min-[640px]:p-5">
       <div class="mb-5 flex items-center justify-between"><h3 class="text-sm font-medium text-white/80">{{ editingId === null ? '新增设备' : '编辑设备' }}</h3><button class="icon-button size-7" type="button" aria-label="关闭表单" @click="formOpen = false"><X :size="14" /></button></div>
       <form class="grid gap-4 min-[760px]:grid-cols-2" @submit.prevent="save">
-        <FormField label="设备名称" :error="fieldErrors.name"><input v-model="form.name" class="field" maxlength="70" placeholder="MacBook Pro" /></FormField>
-        <FormField label="设备分类" :error="fieldErrors.category"><input v-model="form.category" class="field" maxlength="40" placeholder="日常主力" /></FormField>
-        <div class="min-[760px]:col-span-2"><FormField label="设备描述" :error="fieldErrors.description"><input v-model="form.description" class="field" maxlength="120" placeholder="配置、用途或一句描述" /></FormField></div>
-        <FormField label="Lucide 图标名" hint="如 Laptop"><input v-model="form.icon" class="field" placeholder="Laptop" /></FormField>
-        <FormField label="排序" :error="fieldErrors.sort"><input v-model.number="form.sort" class="field" type="number" min="0" /></FormField>
+        <FormField label="设备名称" :error="fieldErrors.name"><input v-model="form.name" class="field" maxlength="100" placeholder="MacBook Pro" /></FormField>
+        <FormField label="设备分类" :error="fieldErrors.category"><input v-model="form.category" class="field" maxlength="50" placeholder="日常主力" /></FormField>
+        <div class="min-[760px]:col-span-2"><FormField label="设备描述" :error="fieldErrors.description"><input v-model="form.description" class="field" maxlength="500" placeholder="配置、用途或一句描述" /></FormField></div>
+        <FormField label="Lucide 图标名" hint="如 Laptop"><input v-model="form.icon" class="field" maxlength="100" placeholder="Laptop" /></FormField>
+        <FormField label="排序" :error="fieldErrors.sort"><input v-model.number="form.sort" class="field" type="number" min="0" max="1000000" /></FormField>
         <div class="min-[760px]:col-span-2"><ToggleSwitch v-model="form.enabled" label="在主页显示" /></div>
         <div class="flex justify-end gap-2 min-[760px]:col-span-2"><button class="secondary-button" type="button" @click="formOpen = false">取消</button><button class="primary-button" type="submit" :disabled="saving"><Save :size="14" />{{ saving ? '保存中…' : '保存设备' }}</button></div>
       </form>

@@ -22,6 +22,14 @@ import (
 )
 
 func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
+	assets, err := fs.Sub(web.Assets, "dist")
+	if err != nil {
+		return nil, err
+	}
+	return NewRouterWithAssets(cfg, api, assets)
+}
+
+func NewRouterWithAssets(cfg config.Config, api *API, assets fs.FS) (*gin.Engine, error) {
 	api.cookieSecure = cfg.SecureCookies()
 	gin.SetMode(cfg.Server.Mode)
 	router := gin.New()
@@ -41,8 +49,8 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	router.HEAD("/healthz", api.Health)
 	router.GET("/storage/images/:filename", staticFile(cfg.Storage.Path, "images"))
 	router.HEAD("/storage/images/:filename", staticFile(cfg.Storage.Path, "images"))
-	router.GET("/storage/music/:filename", staticFile(cfg.Storage.Path, "music"))
-	router.HEAD("/storage/music/:filename", staticFile(cfg.Storage.Path, "music"))
+	router.GET("/storage/music/:filename", middleware.RequestDeadline(30*time.Minute), staticFile(cfg.Storage.Path, "music"))
+	router.HEAD("/storage/music/:filename", middleware.RequestDeadline(30*time.Minute), staticFile(cfg.Storage.Path, "music"))
 
 	v1 := router.Group("/api/v1")
 	v1.GET("/health", api.Health)
@@ -116,10 +124,6 @@ func NewRouter(cfg config.Config, api *API) (*gin.Engine, error) {
 	admin.POST("/uploads/music", middleware.RequestDeadline(5*time.Minute), middleware.BodyLimit(cfg.Upload.MaxMusicBytes+(1<<20)), api.UploadMusic)
 	admin.POST("/uploads/lyrics", middleware.BodyLimit((1<<20)+(64<<10)), api.UploadLyrics)
 
-	assets, err := fs.Sub(web.Assets, "dist")
-	if err != nil {
-		return nil, err
-	}
 	compressedAssets, err := precompressAssets(assets)
 	if err != nil {
 		return nil, fmt.Errorf("预压缩前端资源: %w", err)

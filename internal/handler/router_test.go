@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"homepage/internal/config"
@@ -23,7 +23,6 @@ import (
 	"homepage/internal/model"
 	"homepage/internal/repository"
 	"homepage/internal/service"
-	"homepage/web"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -73,6 +72,19 @@ func newTestApp(t *testing.T) testApp {
 	return openTestRouter(t, cfg, db)
 }
 
+const (
+	testIndexHTML    = `<!doctype html><html lang="zh-CN"><head><title>Test</title></head><body><div id="app"></div></body></html>`
+	testAssetPath    = "/assets/index-a1b2c3d4.js"
+	testAssetContent = `console.log("test asset");`
+)
+
+func testAssets() fstest.MapFS {
+	return fstest.MapFS{
+		"index.html":                           {Data: []byte(testIndexHTML)},
+		strings.TrimPrefix(testAssetPath, "/"): {Data: []byte(testAssetContent)},
+	}
+}
+
 func openTestRouter(t *testing.T, cfg config.Config, db *gorm.DB) testApp {
 	t.Helper()
 	repo := repository.New(db)
@@ -84,7 +96,7 @@ func openTestRouter(t *testing.T, cfg config.Config, db *gorm.DB) testApp {
 		service.NewMusicService(repo, cfg.Storage.Path),
 	)
 	api.SetMusicProviders(service.NewNeteaseService(repo, nil), service.NewS3Service(repo, nil))
-	router, err := NewRouter(cfg, api)
+	router, err := NewRouterWithAssets(cfg, api, testAssets())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,6 +271,37 @@ func TestAdminContentLifecycleAndPersistence(t *testing.T) {
 	performJSON(t, app.router, http.MethodDelete, fmt.Sprintf("/api/v1/admin/devices/%d", device.ID), nil, cookie, http.StatusOK)
 	performJSON(t, app.router, http.MethodPost, "/api/v1/admin/logout", nil, cookie, http.StatusOK)
 	performJSON(t, app.router, http.MethodGet, "/api/v1/admin/session", nil, cookie, http.StatusUnauthorized)
+}
+
+func TestSettingsOptimisticConflictAndCrossPanelUpdate(t *testing.T) {
+	app := newTestApp(t)
+	cookie := login(t, app.router)
+	first := responseData[model.Settings](t, performJSON(t, app.router, http.MethodGet, "/api/v1/settings", nil, nil, http.StatusOK))
+	stale := responseData[model.Settings](t, performJSON(t, app.router, http.MethodGet, "/api/v1/settings", nil, nil, http.StatusOK))
+	if first.Version != 1 || stale.Version != first.Version {
+		t.Fatalf("设置初始版本不正确: first=%d stale=%d", first.Version, stale.Version)
+	}
+
+	first.SiteTitle = "settings panel"
+	first.ClockLabel = ""
+	first.Music.LyricsEnabled = true
+	updated := responseData[model.Settings](t, performJSON(t, app.router, http.MethodPut, "/api/v1/admin/settings", first, cookie, http.StatusOK))
+	if updated.Version != 2 || updated.ClockLabel != "" {
+		t.Fatalf("设置更新响应缺少新版本或显式空字符串: %+v", updated)
+	}
+	stale.SiteTitle = "stale overwrite"
+	stale.Music.LyricsEnabled = false
+	performJSON(t, app.router, http.MethodPut, "/api/v1/admin/settings", stale, cookie, http.StatusConflict)
+
+	latest := responseData[model.Settings](t, performJSON(t, app.router, http.MethodGet, "/api/v1/settings", nil, nil, http.StatusOK))
+	if latest.Version != 2 || latest.SiteTitle != "settings panel" || !latest.Music.LyricsEnabled {
+		t.Fatalf("冲突请求覆盖了成功方设置: %+v", latest)
+	}
+	latest.Music.LyricsEnabled = false
+	crossPanel := responseData[model.Settings](t, performJSON(t, app.router, http.MethodPut, "/api/v1/admin/settings", latest, cookie, http.StatusOK))
+	if crossPanel.Version != 3 || crossPanel.SiteTitle != "settings panel" || crossPanel.Music.LyricsEnabled {
+		t.Fatalf("刷新版本后的播放面板更新不正确: %+v", crossPanel)
+	}
 }
 
 func TestVisitorGETReturnsRequestContext(t *testing.T) {
@@ -443,6 +486,29 @@ func TestNeteaseBulkPlaylistRoutesUseExtendedDeadline(t *testing.T) {
 	}
 }
 
+func TestLocalMusicRoutesUseExtendedDeadline(t *testing.T) {
+	app := newTestApp(t)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		request := httptest.NewRequest(method, "/storage/music/missing.mp3", nil)
+		recorder := &routeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+		started := time.Now()
+		app.router.ServeHTTP(recorder, request)
+		for name, deadline := range map[string]time.Time{"read": recorder.readDeadline, "write": recorder.writeDeadline} {
+			remaining := deadline.Sub(started)
+			if remaining < 30*time.Minute-time.Second || remaining > 30*time.Minute+time.Second {
+				t.Errorf("%s 音频的 %s deadline 未设置为 30 分钟: %v", method, name, remaining)
+			}
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/storage/images/missing.png", nil)
+	recorder := &routeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	app.router.ServeHTTP(recorder, request)
+	if !recorder.readDeadline.IsZero() || !recorder.writeDeadline.IsZero() {
+		t.Fatal("其他静态资源不应继承音频长 deadline")
+	}
+}
+
 func TestHealthAndStorageHead(t *testing.T) {
 	app := newTestApp(t)
 	for _, route := range []string{"/healthz", "/api/v1/health"} {
@@ -494,25 +560,8 @@ func TestHealthAndStorageHead(t *testing.T) {
 
 func TestEmbeddedAssetsCachingCompressionAndSPAFallback(t *testing.T) {
 	app := newTestApp(t)
-	entries, err := fs.ReadDir(web.Assets, "dist/assets")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assetName := ""
-	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".js" {
-			assetName = entry.Name()
-			break
-		}
-	}
-	if assetName == "" {
-		t.Fatal("嵌入资源中没有 JS 文件")
-	}
-	assetPath := "/assets/" + assetName
-	original, err := fs.ReadFile(web.Assets, "dist/assets/"+assetName)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assetPath := testAssetPath
+	original := []byte(testAssetContent)
 	get := func(path, acceptEncoding string) *httptest.ResponseRecorder {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodGet, path, nil)
